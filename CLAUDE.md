@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Repository
+
+- **Remote:** https://github.com/fazxes/Trading.git (private)
+- **Branch:** main
+
 ## Project Overview
 
 Pocket Option trading bot implementing the "Divine Formula" (7-second entry) strategy for EUR/USD OTC binary options on 5-minute candles. The system samples 6 prices during a candle's formation, runs multi-layer signal analysis, and executes BUY/SELL trades at ~8 seconds remaining.
