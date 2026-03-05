@@ -11,12 +11,54 @@ Usage:
 
 import time
 import datetime
+import json
+import threading
 import warnings
 from typing import Dict, Optional
 
 warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
 
 from playwright.sync_api import sync_playwright, Page
+
+
+# ═══════════════════════════════════════════════════════════════
+# LIVE PRICE VIA WEBSOCKET
+# Pocket Option streams ticks as: [["EURUSD_otc", timestamp, price]]
+# ═══════════════════════════════════════════════════════════════
+
+_latest_price = {'value': None, 'ts': 0.0}
+_last_update_local = {'t': 0.0}
+_price_lock = threading.Lock()
+
+
+def _on_ws_message(payload):
+    """Parse WebSocket frame for EURUSD_otc price ticks."""
+    try:
+        raw = payload if isinstance(payload, str) else payload.decode('utf-8', errors='ignore')
+        # Match the tick format: [["EURUSD_otc", timestamp, price]]
+        if 'EURUSD_otc' not in raw:
+            return
+        data = json.loads(raw)
+        if isinstance(data, list) and len(data) > 0:
+            for tick in data:
+                if isinstance(tick, list) and len(tick) >= 3 and tick[0] == 'EURUSD_otc':
+                    price = float(tick[2])
+                    ts = float(tick[1])
+                    with _price_lock:
+                        if ts >= _latest_price['ts']:
+                            _latest_price['value'] = price
+                            _latest_price['ts'] = ts
+                            _last_update_local['t'] = time.time()
+    except (json.JSONDecodeError, ValueError, TypeError, IndexError):
+        pass
+
+
+def setup_price_feed(page: Page):
+    """Attach WebSocket listener to capture live price ticks from Pocket Option."""
+    def on_ws(ws):
+        ws.on("framereceived", lambda payload: _on_ws_message(payload))
+    page.on("websocket", on_ws)
+    print("[PRICE] WebSocket price feed listener attached")
 
 # ═══════════════════════════════════════════════════════════════
 # CONFIGURATION — change these as needed
@@ -276,28 +318,15 @@ def click_sell(page: Page):
     return (time.time() - start) * 1000
 
 
-def get_price_yf() -> Optional[float]:
-    """Get latest EUR/USD price from yfinance."""
-    try:
-        import yfinance as yf
-        d = yf.Ticker("EURUSD=X").history(period="1d", interval="1m")
-        if not d.empty:
-            return float(d['Close'].iloc[-1])
-    except Exception:
-        pass
+def get_live_price() -> Optional[float]:
+    """Get the latest EUR/USD price from the WebSocket feed."""
+    with _price_lock:
+        price = _latest_price['value']
+        local_age = time.time() - _last_update_local['t'] if _last_update_local['t'] > 0 else float('inf')
+    # Price should be fresh (updated within last 10 seconds)
+    if price and local_age < 10:
+        return price
     return None
-
-
-def get_prices_yf_batch() -> list:
-    """Get last 10 one-minute closes from yfinance."""
-    try:
-        import yfinance as yf
-        d = yf.Ticker("EURUSD=X").history(period="1d", interval="1m")
-        if not d.empty and len(d) >= 10:
-            return [float(x) for x in d['Close'].iloc[-10:].tolist()]
-    except Exception:
-        pass
-    return []
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -321,18 +350,38 @@ def seconds_remaining(candle_end: datetime.datetime) -> float:
     return (candle_end - datetime.datetime.now()).total_seconds()
 
 
-def wait_until_remaining(candle_end: datetime.datetime, target_secs: float):
-    """Sleep until the candle countdown reaches target_secs remaining."""
+def playwright_sleep(page: Page, duration: float):
+    """Sleep while keeping Playwright's event loop alive (processes WS frames).
+    Uses page.wait_for_timeout which yields to the browser event loop."""
+    if duration <= 0:
+        return
+    # Break into chunks so WS messages get processed regularly
+    chunk = min(duration, 2.0)
+    remaining = duration
+    while remaining > 0:
+        ms = int(min(chunk, remaining) * 1000)
+        page.wait_for_timeout(ms)
+        remaining -= chunk
+
+
+def wait_until_remaining(candle_end: datetime.datetime, target_secs: float, page: Page = None):
+    """Sleep until the candle countdown reaches target_secs remaining.
+    If page is provided, uses Playwright-friendly sleep to keep WS alive."""
     while True:
         rem = seconds_remaining(candle_end)
         if rem <= target_secs:
             return rem
-        # Sleep most of the wait, then poll tightly
         wait = rem - target_secs
-        if wait > 1:
-            time.sleep(wait - 0.5)
+        if page:
+            if wait > 1:
+                playwright_sleep(page, min(wait - 0.5, 2.0))
+            else:
+                playwright_sleep(page, 0.05)
         else:
-            time.sleep(0.01)
+            if wait > 1:
+                time.sleep(wait - 0.5)
+            else:
+                time.sleep(0.01)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -354,52 +403,52 @@ def run_candle_cycle(page: Page):
     print(f"  Candle ends: {candle_end.strftime('%H:%M:%S')}  ({rem:.0f}s remaining)")
     print(f"{'='*60}")
 
-    # If we're already past the B1 sample point (105s remaining),
-    # skip to next candle
-    if rem < SAMPLES['D3']:
-        print(f"[SKIP] Only {rem:.0f}s left — too late for this candle. Waiting for next...")
+    # Must have enough time to catch B1 (first sample at 150s remaining).
+    # If we joined mid-candle, skip entirely — no partial data, no guessing.
+    first_sample_time = SAMPLES['B1']  # 150s
+    if rem < first_sample_time + 3:
+        print(f"[SKIP] Only {rem:.0f}s left — need {first_sample_time}s for B1. Waiting for next candle...")
+        return {'result': None, 'candle_end': candle_end}
+
+    # Verify WebSocket feed is alive before committing to this candle
+    if get_live_price() is None:
+        print("[SKIP] WebSocket price feed not active — cannot sample. Waiting for next candle...")
         return {'result': None, 'candle_end': candle_end}
 
     prices = {}
     sorted_samples = sorted(SAMPLES.items(), key=lambda x: x[1], reverse=True)
+    # B1(150s) → B2(105s) → B3(60s) → D1(45s) → D2(30s) → D3(12s)
 
-    # Pre-fetch batch prices from yfinance once (for fallback)
-    print("[PREFETCH] Loading yfinance prices...")
-    t0 = time.time()
-    yf_prices = get_prices_yf_batch()
-    print(f"[PREFETCH] Got {len(yf_prices)} bars in {(time.time()-t0)*1000:.0f}ms")
+    SAMPLE_TOLERANCE = 3  # seconds — max acceptable timing drift
 
-    # Collect each sample at the right time
     for label, target_rem in sorted_samples:
         current_rem = seconds_remaining(candle_end)
 
-        if current_rem > target_rem:
-            # Wait for the right moment
+        # Wait for the exact sample moment
+        if current_rem > target_rem + 1:
             print(f"[WAIT] {label} at {target_rem}s remaining (in {current_rem - target_rem:.0f}s)...")
-            wait_until_remaining(candle_end, target_rem)
+            wait_until_remaining(candle_end, target_rem, page)
 
-        # Sample price
-        if current_rem >= target_rem - 2:
-            # We're at the right time — get live price
-            price = get_price_yf()
-            if price:
-                prices[label] = price
-                print(f"[SAMPLE] {label} = {price:.5f}  (at {seconds_remaining(candle_end):.0f}s remaining)")
-            elif yf_prices:
-                # Use pre-fetched data
-                idx = {'B1': -6, 'B2': -5, 'B3': -4, 'D1': -3, 'D2': -2, 'D3': -1}
-                prices[label] = yf_prices[idx[label]]
-                print(f"[SAMPLE] {label} = {prices[label]:.5f}  (prefetched)")
-        else:
-            # Missed this sample, use prefetch
-            if yf_prices:
-                idx = {'B1': -6, 'B2': -5, 'B3': -4, 'D1': -3, 'D2': -2, 'D3': -1}
-                prices[label] = yf_prices[idx[label]]
-                print(f"[SAMPLE] {label} = {prices[label]:.5f}  (prefetched, sample window passed)")
+        # Read live price from the WebSocket feed
+        price = get_live_price()
+        actual_rem = seconds_remaining(candle_end)
+        drift = abs(actual_rem - target_rem)
 
-    if len(prices) < 6:
-        print(f"[ERROR] Only got {len(prices)}/6 prices — skipping trade")
-        return {'result': None, 'candle_end': candle_end}
+        if not price:
+            print(f"[ABORT] {label} — WebSocket price lost. Scrapping candle.")
+            return {'result': None, 'candle_end': candle_end}
+
+        if drift > SAMPLE_TOLERANCE:
+            print(f"[ABORT] {label} — sampled at {actual_rem:.1f}s but needed {target_rem}s "
+                  f"(drift {drift:.1f}s > {SAMPLE_TOLERANCE}s tolerance). Scrapping candle.")
+            return {'result': None, 'candle_end': candle_end}
+
+        prices[label] = price
+        print(f"[SAMPLE] {label} = {price:.5f}  (at {actual_rem:.0f}s remaining, drift {drift:.1f}s)")
+
+    # All 6 samples collected within tolerance
+    assert len(prices) == 6, f"Expected 6 prices, got {len(prices)}"
+    print(f"[OK] All 6 samples collected cleanly")
 
     # ── Run analysis ────────────────────────────────────
     t0 = time.time()
@@ -433,7 +482,7 @@ def run_candle_cycle(page: Page):
     rem = seconds_remaining(candle_end)
     if rem > TRADE_AT_REMAINING:
         print(f"\n[WAIT] Trade fires at {TRADE_AT_REMAINING}s remaining (in {rem - TRADE_AT_REMAINING:.0f}s)...")
-        wait_until_remaining(candle_end, TRADE_AT_REMAINING)
+        wait_until_remaining(candle_end, TRADE_AT_REMAINING, page)
 
     # ── FIRE TRADE ──────────────────────────────────────
     rem_at_fire = seconds_remaining(candle_end)
@@ -475,9 +524,22 @@ def main():
         )
         page = context.new_page()
 
+        # Attach WebSocket price feed BEFORE login so we capture all connections
+        setup_price_feed(page)
+
         login(page)
         set_amount(page, TRADE_AMOUNT)
         set_expiry(page, TRADE_EXPIRY)
+
+        # Wait for WebSocket price feed to start delivering ticks
+        print("[PRICE] Waiting for first price tick...")
+        for _ in range(30):
+            if get_live_price() is not None:
+                print(f"[PRICE] Feed active — current price: {get_live_price():.5f}")
+                break
+            playwright_sleep(page, 1)
+        else:
+            print("[PRICE] WARNING: No price ticks received after 30s — check WebSocket connection")
 
         print("\n[READY] Bot is running. Ctrl+C to stop.")
         print(f"[READY] Will trade every 5-min candle at {TRADE_AT_REMAINING}s remaining.\n")
@@ -489,9 +551,9 @@ def main():
                 rem = seconds_remaining(cycle['candle_end'])
                 if rem > 0:
                     print(f"\n[WAIT] Candle closes in {rem:.0f}s — waiting for next cycle...")
-                    time.sleep(rem + 2)
+                    playwright_sleep(page, rem + 2)
                 else:
-                    time.sleep(2)
+                    playwright_sleep(page, 2)
         except KeyboardInterrupt:
             print("\n[STOP] Stopped by user")
 
