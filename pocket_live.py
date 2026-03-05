@@ -11,8 +11,6 @@ Usage:
 
 import time
 import datetime
-import statistics
-import sys
 import warnings
 from typing import Dict, Optional
 
@@ -32,119 +30,140 @@ TRADE_EXPIRY = 7          # Seconds (the 7-second divine formula)
 CANDLE_SECONDS = 300      # 5-minute candle = 300 seconds
 TRADE_AT_REMAINING = 8    # Place trade when this many seconds left
 
+TRADE_ON_CAUTION = False   # True = trade even with yellow warnings
+
 # Price sample schedule: label -> seconds remaining on candle countdown
 SAMPLES = {
-    'B1': 105,  # 1:45 remaining
-    'B2': 58,   # 0:58 remaining
-    'B3': 43,   # 0:43 remaining
-    'D1': 30,   # 0:30 remaining
-    'D2': 26,   # 0:26 remaining
-    'D3': 22,   # 0:22 remaining
+    'B1': 150,  # 2:30 remaining
+    'B2': 105,  # 1:45 remaining
+    'B3': 60,   # 1:00 remaining
+    'D1': 45,   # 0:45 remaining
+    'D2': 30,   # 0:30 remaining
+    'D3': 12,   # 0:12 remaining (TRIGGER — analysis runs here)
 }
 
 
 # ═══════════════════════════════════════════════════════════════
-# DIVINE FORMULA — Sheet3 + Advanced + Session
+# 7-SECOND ENTRY CONFIRMATION SYSTEM
+# From: EURUSD_7sec_Checklist.html
 # ═══════════════════════════════════════════════════════════════
 
-def calc_volatility(B1, B3, D1, D3):
-    ab, ad = abs(B1 - B3), abs(D1 - D3)
-    if ab >= 0.001 and ad >= 0.001: return "HIGH"
-    if 0.0004 <= ab < 0.001 and 0.0004 <= ad < 0.001: return "MEDIUM"
-    return "LOW"
+def _sign(x):
+    return (x > 0) - (x < 0)
 
-def s3_direction(B4, B1, B2, B3, D1, D2, D3, vol):
-    if vol == "HIGH" and B4 > B3 > B2 > B1 and D3 > D2 > D1: return "BUY"
-    if vol == "LOW" and B4 < B3 < B2 < B1 and D3 < D2 < D1: return "SELL"
-    if vol == "STABLE" and abs(B4-B3) < 0.0001 and abs(D3-D2) < 0.0001: return "BUY"
-    if vol == "STABLE" and B4 > B3 and D3 > D2: return "BUY"
-    return "SELL"
 
-def s3_strength(B1, B2, B3, D1, D2, D3):
-    if D1 > D2 > D3 and B1 > B2 > B3 and abs(D1-D3) > 0.00015 and abs(B1-B3) > 0.00015: return "SELL STRONG"
-    if D1 < D2 < D3 and B1 < B2 < B3 and abs(D1-D3) > 0.00015 and abs(B1-B3) > 0.00015: return "BUY STRONG"
-    if D1 > D2 and B1 > B2: return "SELL STRONG"
-    if D1 < D2 and B1 < B2: return "BUY STRONG"
-    return "SELL STRONG"
+def compute_signal(B1, B2, B3, D1, D2, D3):
+    """Primary signal with skip filters, decel trap reversal, and momentum."""
+    all_p = [B1, B2, B3, D1, D2, D3]
+    avg = sum(all_p) / 6
+    hi, lo = max(all_p), min(all_p)
+    rng = hi - lo + 0.00001
 
-def s3_confirm(B4, B1, B2, B3, D1, D2, D3):
-    return "BUY" if B4 > B3 > B2 > B1 and D3 > D2 > D1 else "SELL"
+    # Skip filters
+    if (hi - lo) < 0.0001:
+        return "SKIP"
+    if abs(D3-avg) < 0.08*rng and abs(D3-D2) < 0.12*rng and abs(D2-D1) < 0.12*rng:
+        return "SKIP"
+    if _sign(D3-D2) != _sign(D2-D1) and abs(D3-D2) > 0.75*rng:
+        return "SKIP"
 
-def s3_safety(B4, B1, B2, B3):
-    if abs(B4-B3) > 0.0005 and abs(B3-B2) > 0.0005 and abs(B2-B1) > 0.0005:
-        return "WAIT"
-    return "OK"
+    # Decel trap reversal
+    pos_d3 = (D3 - lo) / rng
+    if D3 > avg and (D3-D2) < 0.1*rng and (D2-D1) > 0.3*rng and pos_d3 > 0.75:
+        return "SELL"
+    if D3 < avg and (D2-D3) < 0.1*rng and (D1-D2) > 0.3*rng and (hi-D3)/rng > 0.75:
+        return "BUY"
 
-def session_direction(B4, B1, B2, B3, D1, D2, D3, weekend):
-    hour = datetime.datetime.now().hour
-    up = B4 > B3 > B2 and D3 > D2 > D1
-    if weekend:
-        if 8 <= hour < 15: return "BUY" if up and abs(B4-B1) > 0.0002 else "SELL"
-        if 15 <= hour < 18: return "BUY" if up and abs(B4-B2) > 0.00025 else "SELL"
-        if 18 <= hour < 24: return "BUY" if up and abs(B4-B2) > 0.0002 else "SELL"
-        return "SELL" if B4 < B3 < B2 and D3 < D2 < D1 else "BUY"
+    # Strong momentum
+    early_avg = (B1 + B2 + B3) / 3
+    weighted = 0.5*D3 + 0.3*D2 + 0.2*D1
+    if weighted > early_avg and D3 > avg and (D3-D2) > 0.14*rng and pos_d3 > 0.58:
+        return "BUY"
+    if weighted < early_avg and D3 < avg and (D2-D3) > 0.14*rng and (hi-D3)/rng > 0.58:
+        return "SELL"
+
+    # Fallback
+    return "BUY" if D3 > avg else "SELL"
+
+
+def check_confirmations(B1, B2, B3, D1, D2, D3):
+    """5 confirmation checks. Returns list of (name, status, message).
+    status: 'good', 'warn', or 'bad'."""
+    all_p = [B1, B2, B3, D1, D2, D3]
+    hi, lo = max(all_p), min(all_p)
+    rng = hi - lo + 0.00001
+    results = []
+
+    # 1. Momentum Continuation
+    if   D3 > D2 and D2 > D1: results.append(("Momentum",  "good", "STRONG UP"))
+    elif D3 < D2 and D2 < D1: results.append(("Momentum",  "good", "STRONG DOWN"))
+    elif D3 > D2 and D2 < D1: results.append(("Momentum",  "warn", "SHIFT — DIP THEN UP"))
+    elif D3 < D2 and D2 > D1: results.append(("Momentum",  "bad",  "DECEL TRAP"))
+    else:                      results.append(("Momentum",  "warn", "MIXED"))
+
+    # 2. Deceleration Ratio
+    d21 = abs(D2 - D1)
+    d32 = abs(D3 - D2)
+    if d21 < 0.000001:
+        results.append(("Decel Ratio", "warn", "FLAT D1→D2"))
     else:
-        if 8 <= hour < 15: return "BUY" if up and abs(B4-B1) > 0.0002 else "SELL"
-        if 15 <= hour < 18: return "BUY" if up else "SELL"
-        if 18 <= hour < 23: return "BUY" if up and abs(B4-B1) > 0.00025 else "SELL"
-        return "BUY" if up and abs(B4-B3) < 0.00035 else "SELL"
+        ratio = d32 / d21
+        if   ratio >= 0.8: results.append(("Decel Ratio", "good", f"ACCEL {ratio*100:.0f}%"))
+        elif ratio >= 0.4: results.append(("Decel Ratio", "warn", f"SLOWING {ratio*100:.0f}%"))
+        else:              results.append(("Decel Ratio", "bad",  f"DECEL {ratio*100:.0f}%"))
 
-def advanced_signal(B1, B2, B3, B4, D1, D2, D3):
-    avg_b = statistics.mean([B1, B2, B3])
-    std_b = statistics.pstdev([B1, B2, B3])
-    avg_d = statistics.mean([D1, D2, D3])
-    E1 = (D3-D2) + (D2-D1)
-    E2 = statistics.mean([abs(D3-D2), abs(D2-D1)])
-    E3 = (max(0, D3-D2) + max(0, D2-D1)) / 2
-    E4 = ((abs(D3-D2) if D3<D2 else 0) + (abs(D2-D1) if D2<D1 else 0)) / 2
-    E5 = 100 - (100 / (1 + E3/max(0.0001, E4)))
-    E6 = abs(D3-D2) / max(0.0001, E2)
-    E7 = abs(D3-D2) / max(0.0001, abs(D2-D1))
-    E8 = abs((D3-B4)-E1) / max(0.0001, statistics.pstdev([D3,D2,D1]))
-    E9 = statistics.mean([abs(B1-B2), abs(B2-B3)]) * 1.5
-    E10 = (D3-avg_b) / max(0.0001, std_b)
-    E11 = (D3-D2) / max(0.0001, statistics.mean([abs(B1-B2), abs(B2-B3), abs(D2-D1)]))
-    E12 = min(1, abs(E10)*E6/max(0.0001, E8))
-    if (E1>=E2*E9 and D3>B4 and D3>max(B1,B2,B3) and E5<65 and avg_d>avg_b
-            and D3>(avg_b+0.5*std_b) and E6>0.2 and E8<2 and E10>0.03 and E11>0.4 and E12>0.8):
-        return "HARD BUY"
-    if (E1<=E2*E9*-1 and D3<B4 and D3<min(B1,B2,B3) and E5>35 and avg_d<avg_b
-            and D3<(avg_b-0.5*std_b) and E6>0.2 and E8<1.5 and E10<-0.15 and E11<-0.5 and E12>0.8):
-        return "HARD SELL"
-    if (E1>=E2*E9*0.5 and D3>B4 and avg_d>avg_b and D3>(avg_b-0.5*std_b)
-            and 0.15<E7<6 and E8<1.8 and E10>0.02 and E11>0.3 and E12>0.7):
-        return "SOFT BUY"
-    if (E1<=E2*E9*-0.5 and D3<B4 and avg_d<avg_b and D3<(avg_b+0.5*std_b)
-            and 0.15<E7<6 and E8<1.3 and E10<-0.1 and E11<-0.4 and E12>0.7):
-        return "SOFT SELL"
-    if D3>=B4-0.00003 and E8<1.2 and E10>=-0.005 and E11>0.1 and E12>0.6:
-        return "WEAK BUY"
-    return "WEAK SELL"
+    # 3. Position Danger Zone
+    pos = (D3 - lo) / rng
+    if   pos > 0.92: results.append(("Position", "bad",  f"EXTREME HIGH {pos*100:.1f}%"))
+    elif pos < 0.08: results.append(("Position", "bad",  f"EXTREME LOW {pos*100:.1f}%"))
+    elif pos >= 0.55: results.append(("Position", "good", f"UPPER {pos*100:.1f}%"))
+    elif pos <= 0.45: results.append(("Position", "good", f"LOWER {pos*100:.1f}%"))
+    else:             results.append(("Position", "warn", f"MID {pos*100:.1f}%"))
+
+    # 4. Trend Consistency (5 steps: B1→B2→B3→D1→D2→D3)
+    steps = (_sign(B2-B1) + _sign(B3-B2) + _sign(D1-B3)
+             + _sign(D2-D1) + _sign(D3-D2))
+    abs_steps = abs(steps)
+    if   abs_steps >= 4: results.append(("Consistency", "good", f"{abs_steps}/5 ALIGNED"))
+    elif abs_steps >= 2: results.append(("Consistency", "warn", f"{abs_steps}/5 WEAK"))
+    else:                results.append(("Consistency", "bad",  f"{abs_steps}/5 CHOPPY"))
+
+    # 5. Range Quality
+    pure_rng = hi - lo
+    pips = pure_rng * 100000
+    if   pure_rng >= 0.0008: results.append(("Range", "good", f"STRONG {pips:.1f}p"))
+    elif pure_rng >= 0.0003: results.append(("Range", "good", f"ADEQUATE {pips:.1f}p"))
+    elif pure_rng >= 0.0001: results.append(("Range", "warn", f"THIN {pips:.1f}p"))
+    else:                    results.append(("Range", "bad",  f"MICRO {pips:.1f}p"))
+
+    return results
+
 
 def run_analysis(prices: Dict[str, float]) -> dict:
     B1, B2, B3 = prices['B1'], prices['B2'], prices['B3']
     D1, D2, D3 = prices['D1'], prices['D2'], prices['D3']
-    B4 = statistics.mean([B1, B2, B3, D1, D2, D3])
-    B4w = (B1*1 + B2*1.5 + B3*2 + D1*1 + D2*1.2 + D3*1.2) / 7.9
-    vol = calc_volatility(B1, B3, D1, D3)
-    weekend = datetime.datetime.now().weekday() >= 5
 
-    votes = {
-        'Direction': s3_direction(B4, B1, B2, B3, D1, D2, D3, vol),
-        'Confirm':   s3_confirm(B4, B1, B2, B3, D1, D2, D3),
-        'Strength':  "BUY" if "BUY" in s3_strength(B1, B2, B3, D1, D2, D3) else "SELL",
-        'Session':   session_direction(B4, B1, B2, B3, D1, D2, D3, weekend),
-        'Advanced':  "BUY" if "BUY" in advanced_signal(B1, B2, B3, B4w, D1, D2, D3) else "SELL",
-    }
-    buy_count = sum(1 for v in votes.values() if v == "BUY")
-    consensus = "BUY" if buy_count > len(votes) / 2 else "SELL"
-    agree = buy_count if consensus == "BUY" else len(votes) - buy_count
-    safety = s3_safety(B4, B1, B2, B3)
+    signal = compute_signal(B1, B2, B3, D1, D2, D3)
+    confirms = check_confirmations(B1, B2, B3, D1, D2, D3)
+
+    has_red  = any(c[1] == "bad"  for c in confirms)
+    has_warn = any(c[1] == "warn" for c in confirms)
+
+    if signal == "SKIP":
+        verdict = "SKIP"
+    elif has_red:
+        verdict = "NO_ENTRY"
+    elif has_warn:
+        verdict = "CAUTION"
+    else:
+        verdict = signal   # BUY or SELL — all clear
 
     return {
-        'consensus': consensus, 'votes': votes, 'agree': agree,
-        'total': len(votes), 'safety': safety, 'volatility': vol,
-        'advanced': advanced_signal(B1, B2, B3, B4w, D1, D2, D3),
+        'signal': signal,
+        'confirms': confirms,
+        'verdict': verdict,
+        'has_red': has_red,
+        'has_warn': has_warn,
     }
 
 
@@ -323,9 +342,9 @@ def wait_until_remaining(candle_end: datetime.datetime, target_secs: float):
 def run_candle_cycle(page: Page):
     """
     One full candle cycle:
-      1. Wait and sample prices at B1(1:45), B2(58s), B3(43s), D1(30s), D2(26s), D3(22s)
-      2. Run analysis at ~14s remaining
-      3. Place trade at 8s remaining
+      1. Sample prices at B1(2:30), B2(1:45), B3(1:00), D1(45s), D2(30s), D3(12s)
+      2. Run 5-confirmation analysis at D3 (12s remaining)
+      3. Place trade at 8s remaining if all checks pass
     """
     candle_end = next_candle_end()
     rem = seconds_remaining(candle_end)
@@ -387,19 +406,28 @@ def run_candle_cycle(page: Page):
     result = run_analysis(prices)
     t_analysis = (time.time() - t0) * 1000
 
-    consensus = result['consensus']
-    print(f"\n[ANALYSIS] {t_analysis:.0f}ms")
-    print(f"  Volatility: {result['volatility']}")
-    print(f"  Advanced:   {result['advanced']}")
-    for name, vote in result['votes'].items():
-        m = "+" if vote == consensus else "-"
-        print(f"  [{m}] {name}: {vote}")
-    print(f"  CONSENSUS: {consensus} ({result['agree']}/{result['total']})")
-    print(f"  Safety:    {result['safety']}")
+    signal  = result['signal']
+    verdict = result['verdict']
 
-    if result['safety'] == "WAIT":
-        print("[SKIP] High volatility — no trade this candle")
+    print(f"\n[ANALYSIS] {t_analysis:.0f}ms")
+    print(f"  Signal: {signal}")
+    for name, status, msg in result['confirms']:
+        icon = "✓" if status == "good" else ("!" if status == "warn" else "✗")
+        print(f"  [{icon}] {name}: {msg}")
+    print(f"  VERDICT: {verdict}")
+
+    # ── Should we trade? ─────────────────────────────
+    if verdict == "SKIP":
+        print("[SKIP] Formula filtered — unsafe candle")
         return {'result': result, 'candle_end': candle_end}
+    if verdict == "NO_ENTRY":
+        print("[SKIP] Red flag in confirmations — no trade")
+        return {'result': result, 'candle_end': candle_end}
+    if verdict == "CAUTION" and not TRADE_ON_CAUTION:
+        print("[SKIP] Weak confirmations — skipping (set TRADE_ON_CAUTION=True to override)")
+        return {'result': result, 'candle_end': candle_end}
+
+    direction = signal if verdict in ("BUY", "SELL") else signal
 
     # ── Wait for trade entry point: 8s remaining ───────
     rem = seconds_remaining(candle_end)
@@ -408,17 +436,14 @@ def run_candle_cycle(page: Page):
         wait_until_remaining(candle_end, TRADE_AT_REMAINING)
 
     # ── FIRE TRADE ──────────────────────────────────────
-    t_start = time.time()
     rem_at_fire = seconds_remaining(candle_end)
 
-    if consensus == "BUY":
+    if direction == "BUY":
         click_ms = click_buy(page)
     else:
         click_ms = click_sell(page)
 
-    t_total = (time.time() - t_start) * 1000
-
-    print(f"\n  >>> {consensus} TRADE PLACED <<<")
+    print(f"\n  >>> {direction} TRADE PLACED <<<")
     print(f"  Fired at:    {rem_at_fire:.1f}s remaining")
     print(f"  Click time:  {click_ms:.0f}ms")
     print(f"  Expiry:      {TRADE_EXPIRY}s")
@@ -430,7 +455,7 @@ def run_candle_cycle(page: Page):
 def main():
     now = datetime.datetime.now()
     print("=" * 60)
-    print("  POCKET BOT - Divine Formula (7 Second)")
+    print("  POCKET BOT - 7sec Entry Confirmation")
     print(f"  Account: {'DEMO' if DEMO_MODE else 'REAL'}")
     print(f"  Asset:   {ASSET}")
     print(f"  Amount:  ${TRADE_AMOUNT}")
