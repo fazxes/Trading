@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EUR/USD OTC — 7-Second Entry Confirmation</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;600;700&display=swap');
+
+  :root {
+    --bg:       #050810;
+    --panel:    #0A0F1E;
+    --row1:     #0D1424;
+    --row2:     #080D18;
+    --gold:     #F0B429;
+    --green:    #22C55E;
+    --red:      #EF4444;
+    --orange:   #FB923C;
+    --blue:     #60A5FA;
+    --teal:     #2DD4BF;
+    --gray:     #475569;
+    --white:    #F1F5F9;
+    --dim:      #1E293B;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    font-family: 'Share Tech Mono', monospace;
+    color: var(--white);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Scanline overlay */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.04) 2px, rgba(0,0,0,0.04) 4px);
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  .container { max-width: 820px; margin: 0 auto; padding: 16px; }
+
+  /* ── HEADER ── */
+  .header {
+    background: var(--panel);
+    border: 1px solid #1E3A5F;
+    border-top: 3px solid var(--gold);
+    padding: 16px 20px 12px;
+    margin-bottom: 12px;
+    position: relative;
+    overflow: hidden;
+  }
+  .header::after {
+    content: '';
+    position: absolute; right: -30px; top: -30px;
+    width: 120px; height: 120px;
+    background: radial-gradient(circle, rgba(240,180,41,0.06) 0%, transparent 70%);
+    border-radius: 50%;
+  }
+  .header h1 {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 700;
+    font-size: 22px;
+    color: var(--gold);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+  .header p {
+    color: var(--gray);
+    font-size: 11px;
+    margin-top: 4px;
+    letter-spacing: 1px;
+  }
+  .payout-badge {
+    display: inline-block;
+    background: rgba(240,180,41,0.1);
+    border: 1px solid rgba(240,180,41,0.3);
+    color: var(--gold);
+    padding: 2px 8px;
+    font-size: 10px;
+    border-radius: 2px;
+    margin-top: 6px;
+  }
+
+  /* ── INPUT GRID ── */
+  .section-label {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 600;
+    font-size: 11px;
+    color: var(--gold);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    padding: 8px 12px 6px;
+    background: var(--row1);
+    border-left: 3px solid var(--gold);
+    margin-bottom: 2px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-label span { color: var(--gray); font-size: 9px; font-family: 'Share Tech Mono'; font-weight: 400; }
+
+  .input-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 2px;
+    margin-bottom: 2px;
+  }
+  .input-group {
+    background: var(--row2);
+    border: 1px solid var(--dim);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: border-color 0.15s;
+  }
+  .input-group:hover { border-color: #2D4A6E; }
+  .input-group.trigger-cell {
+    border: 1px solid rgba(240,180,41,0.4);
+    background: #0C1520;
+  }
+  .input-label {
+    font-size: 9px;
+    color: var(--gray);
+    letter-spacing: 1px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .input-label .var-name {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 700;
+    font-size: 12px;
+    color: var(--teal);
+  }
+  .trigger-cell .input-label .var-name { color: var(--gold); }
+  .input-label .time-tag { color: var(--gray); font-size: 9px; }
+
+  input[type="number"] {
+    background: #060B14;
+    border: 1px solid #1E3A5F;
+    color: var(--blue);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 14px;
+    padding: 6px 8px;
+    width: 100%;
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    -moz-appearance: textfield;
+  }
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
+  input[type="number"]:focus {
+    border-color: var(--blue);
+    box-shadow: 0 0 0 1px rgba(96,165,250,0.2);
+  }
+  .trigger-cell input[type="number"]:focus {
+    border-color: var(--gold);
+    box-shadow: 0 0 0 1px rgba(240,180,41,0.2);
+  }
+  input[type="number"].filled { border-color: rgba(45,212,191,0.4); color: var(--teal); }
+
+  .avg-display {
+    background: var(--row1);
+    border: 1px solid var(--dim);
+    padding: 10px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .avg-label { color: var(--gray); font-size: 10px; }
+  .avg-value { color: var(--green); font-size: 15px; font-weight: bold; }
+
+  /* ── SIGNAL BOX ── */
+  .signal-box {
+    padding: 20px;
+    text-align: center;
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 700;
+    font-size: 32px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    transition: all 0.2s;
+    background: var(--panel);
+    border: 1px solid var(--dim);
+    margin-bottom: 2px;
+    min-height: 78px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .signal-box.waiting { color: var(--gray); font-size: 16px; letter-spacing: 2px; }
+  .signal-box.buy { background: #14532D; border-color: #22C55E; color: #86EFAC; }
+  .signal-box.sell { background: #4C0519; border-color: #EF4444; color: #FCA5A5; }
+  .signal-box.skip { background: #451A03; border-color: #FB923C; color: #FDE68A; }
+
+  /* ── 5 CONFIRMATION BARS ── */
+  .confirm-grid { display: flex; flex-direction: column; gap: 2px; margin-bottom: 2px; }
+
+  .confirm-row {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    border: 1px solid var(--dim);
+    overflow: hidden;
+    min-height: 38px;
+  }
+  .confirm-label {
+    background: var(--row1);
+    padding: 8px 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .confirm-label .num {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 700;
+    font-size: 10px;
+    color: var(--teal);
+    letter-spacing: 1px;
+  }
+  .confirm-label .name {
+    font-size: 9px;
+    color: var(--gray);
+    letter-spacing: 0.5px;
+    margin-top: 1px;
+  }
+  .confirm-result {
+    padding: 8px 14px;
+    display: flex;
+    align-items: center;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    transition: all 0.2s;
+    background: var(--row2);
+  }
+  .confirm-result.good { background: #052E16; color: #4ADE80; }
+  .confirm-result.warn { background: #451A03; color: #FDE68A; }
+  .confirm-result.bad  { background: #4C0519; color: #FCA5A5; }
+  .confirm-result.neutral { color: var(--gray); }
+
+  /* ── VERDICT ── */
+  .verdict-box {
+    padding: 22px 20px;
+    text-align: center;
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 700;
+    font-size: 24px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    transition: all 0.25s;
+    background: var(--panel);
+    border: 2px solid var(--dim);
+    min-height: 80px;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .verdict-box .sub {
+    font-size: 11px;
+    letter-spacing: 1px;
+    font-weight: 400;
+    font-family: 'Share Tech Mono', monospace;
+    opacity: 0.7;
+  }
+  .verdict-box.clear-buy   { background: #14532D; border-color: #22C55E; color: #86EFAC; }
+  .verdict-box.clear-sell  { background: #4C0519; border-color: #EF4444; color: #FCA5A5; }
+  .verdict-box.caution     { background: #451A03; border-color: #FB923C; color: #FDE68A; }
+  .verdict-box.red-flag    { background: #3B0A0A; border-color: #7F1D1D; color: #FCA5A5; }
+  .verdict-box.skip-signal { background: #451A03; border-color: #92400E; color: #FDE68A; }
+  .verdict-box.waiting-v   { background: var(--panel); border-color: var(--dim); color: var(--gray); font-size: 14px; }
+
+  /* ── DIAGNOSTICS ── */
+  .diag-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+    margin-bottom: 2px;
+  }
+  .diag-item {
+    background: var(--row2);
+    border: 1px solid var(--dim);
+    padding: 8px 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .diag-name { color: var(--gray); font-size: 9px; }
+  .diag-val  { color: var(--white); font-size: 13px; }
+  .diag-val.good { color: var(--green); }
+  .diag-val.warn { color: var(--orange); }
+  .diag-val.bad  { color: var(--red); }
+
+  /* ── CONTROLS ── */
+  .controls {
+    display: flex; gap: 8px; margin-bottom: 12px; margin-top: 10px;
+  }
+  .btn {
+    flex: 1;
+    padding: 11px;
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-analyze {
+    background: var(--gold);
+    color: #000;
+  }
+  .btn-analyze:hover { background: #F6C84A; }
+  .btn-clear {
+    background: transparent;
+    color: var(--gray);
+    border: 1px solid var(--dim);
+    flex: 0 0 120px;
+  }
+  .btn-clear:hover { border-color: var(--gray); color: var(--white); }
+
+  /* ── PAYOUT STRIP ── */
+  .payout-strip {
+    display: grid;
+    grid-template-columns: repeat(3,1fr);
+    gap: 2px;
+    margin-bottom: 12px;
+  }
+  .pay-cell {
+    background: var(--row1);
+    border: 1px solid var(--dim);
+    padding: 8px 10px;
+    text-align: center;
+  }
+  .pay-cell .pay-label { color: var(--gray); font-size: 9px; margin-bottom: 3px; }
+  .pay-cell .pay-val   { font-size: 14px; font-family: 'Rajdhani',sans-serif; font-weight: 700; }
+  .pay-cell .good-val  { color: var(--green); }
+  .pay-cell .warn-val  { color: var(--orange); }
+  .pay-cell .red-val   { color: var(--red); }
+
+  /* ── FLIP GUIDE PILLS ── */
+  .flip-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
+  .flip-pill {
+    background: var(--row1);
+    border: 1px solid #3B0A0A;
+    border-left: 3px solid var(--red);
+    padding: 8px 10px;
+  }
+  .flip-pill .fp-title { color: var(--orange); font-size: 10px; font-family:'Rajdhani',sans-serif; font-weight:700; }
+  .flip-pill .fp-desc  { color: var(--gray); font-size: 9px; margin-top: 3px; line-height: 1.4; }
+
+  /* ── FOOTER ── */
+  .footer { color: var(--gray); font-size: 9px; text-align: center; padding: 16px; letter-spacing: 1px; border-top: 1px solid var(--dim); margin-top: 12px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- HEADER -->
+  <div class="header">
+    <h1>⚡ EUR/USD OTC — 7-Second Entry System</h1>
+    <p>5-MINUTE CANDLE · SESSION 06:00–12:00 · ENTER AT 7–8 SECONDS REMAINING</p>
+    <div class="payout-badge">PAYOUT: 92% · BREAK-EVEN: 52.1% WIN RATE</div>
+  </div>
+
+  <!-- DATA INPUT -->
+  <div class="section-label">◈ STEP 1 — ENTER CANDLE PRICES <span>fill as candle forms → B1 first, D3 last</span></div>
+  <div class="input-grid">
+    <div class="input-group">
+      <div class="input-label"><span class="var-name">B1</span><span class="time-tag">2m 30s</span></div>
+      <input type="number" id="b1" step="0.00001" placeholder="1.08500" oninput="onInput()">
+    </div>
+    <div class="input-group">
+      <div class="input-label"><span class="var-name">B2</span><span class="time-tag">1m 45s</span></div>
+      <input type="number" id="b2" step="0.00001" placeholder="1.08510" oninput="onInput()">
+    </div>
+    <div class="input-group">
+      <div class="input-label"><span class="var-name">B3</span><span class="time-tag">1m 00s</span></div>
+      <input type="number" id="b3" step="0.00001" placeholder="1.08518" oninput="onInput()">
+    </div>
+    <div class="input-group">
+      <div class="input-label"><span class="var-name">D1</span><span class="time-tag">45s</span></div>
+      <input type="number" id="d1" step="0.00001" placeholder="1.08524" oninput="onInput()">
+    </div>
+    <div class="input-group">
+      <div class="input-label"><span class="var-name">D2</span><span class="time-tag">30s</span></div>
+      <input type="number" id="d2" step="0.00001" placeholder="1.08530" oninput="onInput()">
+    </div>
+    <div class="input-group trigger-cell">
+      <div class="input-label"><span class="var-name">D3</span><span class="time-tag">12-10s ◀ TRIGGER</span></div>
+      <input type="number" id="d3" step="0.00001" placeholder="1.08535" oninput="onInput()">
+    </div>
+  </div>
+
+  <div class="avg-display">
+    <span class="avg-label">B4 · CANDLE AVERAGE</span>
+    <span class="avg-value" id="avg-val">— enter all 6 prices —</span>
+  </div>
+
+  <!-- ANALYZE BUTTON -->
+  <div class="controls">
+    <button class="btn btn-analyze" onclick="analyze()">⚡ ANALYZE NOW</button>
+    <button class="btn btn-clear" onclick="clearAll()">CLEAR</button>
+  </div>
+
+  <!-- PRIMARY SIGNAL -->
+  <div class="section-label">◈ STEP 2 — PRIMARY SIGNAL</div>
+  <div class="signal-box waiting" id="signal-box">⏳  WAITING FOR DATA</div>
+
+  <!-- 5 CONFIRMATIONS -->
+  <div class="section-label" style="margin-top:10px">◈ STEP 3 — 5 CONFIRMATIONS <span>all must show green before entering</span></div>
+  <div class="confirm-grid">
+    <div class="confirm-row">
+      <div class="confirm-label"><div class="num">① MOMENTUM</div><div class="name">Is D3 still pushing?</div></div>
+      <div class="confirm-result neutral" id="c1">—</div>
+    </div>
+    <div class="confirm-row">
+      <div class="confirm-label"><div class="num">② DECEL RATIO</div><div class="name">D3-D2 vs D2-D1 size</div></div>
+      <div class="confirm-result neutral" id="c2">—</div>
+    </div>
+    <div class="confirm-row">
+      <div class="confirm-label"><div class="num">③ POSITION</div><div class="name">D3 in danger zone?</div></div>
+      <div class="confirm-result neutral" id="c3">—</div>
+    </div>
+    <div class="confirm-row">
+      <div class="confirm-label"><div class="num">④ CONSISTENCY</div><div class="name">Steps B1→D3 aligned?</div></div>
+      <div class="confirm-result neutral" id="c4">—</div>
+    </div>
+    <div class="confirm-row">
+      <div class="confirm-label"><div class="num">⑤ RANGE</div><div class="name">Candle worth trading?</div></div>
+      <div class="confirm-result neutral" id="c5">—</div>
+    </div>
+  </div>
+
+  <!-- FINAL VERDICT -->
+  <div class="section-label" style="margin-top:10px">◈ STEP 4 — FINAL ENTRY VERDICT</div>
+  <div class="verdict-box waiting-v" id="verdict-box">
+    <div>⏳ WAITING FOR ANALYSIS</div>
+    <div class="sub">enter all 6 prices then click analyze</div>
+  </div>
+
+  <!-- RAW DIAGNOSTICS -->
+  <div class="section-label" style="margin-top:10px">◈ DIAGNOSTICS</div>
+  <div class="diag-grid">
+    <div class="diag-item"><span class="diag-name">Candle Range (pips)</span><span class="diag-val" id="d-range">—</span></div>
+    <div class="diag-item"><span class="diag-name">D3 Position in Range</span><span class="diag-val" id="d-pos">—</span></div>
+    <div class="diag-item"><span class="diag-name">Decel Ratio</span><span class="diag-val" id="d-decel">—</span></div>
+    <div class="diag-item"><span class="diag-name">Trend Steps Aligned</span><span class="diag-val" id="d-steps">—</span></div>
+    <div class="diag-item"><span class="diag-name">Late Momentum D3-D2</span><span class="diag-val" id="d-latemom">—</span></div>
+    <div class="diag-item"><span class="diag-name">Weighted Late Score</span><span class="diag-val" id="d-weighted">—</span></div>
+  </div>
+
+  <!-- PAYOUT MATH -->
+  <div class="section-label" style="margin-top:10px">◈ PAYOUT MATH — 92%</div>
+  <div class="payout-strip">
+    <div class="pay-cell"><div class="pay-label">Break-even win rate</div><div class="pay-val warn-val">52.1%</div></div>
+    <div class="pay-cell"><div class="pay-label">EV at 60% win rate</div><div class="pay-val good-val">+$0.122 / $1</div></div>
+    <div class="pay-cell"><div class="pay-label">Skipping 1 bad trade</div><div class="pay-val good-val">= +$1.00 saved</div></div>
+  </div>
+
+  <!-- FLIP PATTERN QUICK REFERENCE -->
+  <div class="section-label">◈ FLIP PATTERN QUICK REFERENCE <span>if you see any of these → DO NOT ENTER</span></div>
+  <div class="flip-grid">
+    <div class="flip-pill">
+      <div class="fp-title">🚨 DECEL TRAP</div>
+      <div class="fp-desc">D2-D1 was big. D3-D2 is tiny (&lt;50%). Price exhausted. Reversal coming.</div>
+    </div>
+    <div class="flip-pill">
+      <div class="fp-title">🚨 EXTREME POSITION</div>
+      <div class="fp-desc">D3 above 92% or below 8% of range. Nowhere left to go. Skip.</div>
+    </div>
+    <div class="flip-pill">
+      <div class="fp-title">🚨 DIRECTION FLIP AT D3</div>
+      <div class="fp-desc">D1→D2 went up. D3 went DOWN vs D2. Flip already started at D3.</div>
+    </div>
+    <div class="flip-pill">
+      <div class="fp-title">🚨 MICRO RANGE</div>
+      <div class="fp-desc">Total range under 3 pips. OTC noise. No real momentum. Unreadable.</div>
+    </div>
+    <div class="flip-pill">
+      <div class="fp-title">⚠️ CHOPPY CANDLE</div>
+      <div class="fp-desc">Prices zig-zag across all 6 readings. Less than 3 steps same direction.</div>
+    </div>
+    <div class="flip-pill">
+      <div class="fp-title">⚠️ LATE SPIKE</div>
+      <div class="fp-desc">D2 was flat. D3 suddenly jumped large. Single spike = liquidity grab.</div>
+    </div>
+  </div>
+
+  <div class="footer">EUR/USD OTC · 5-MIN CANDLES · SESSION 06:00–12:00 · 92% PAYOUT · BREAK-EVEN 52.1%</div>
+</div>
+
+<script>
+function getVals() {
+  const ids = ['b1','b2','b3','d1','d2','d3'];
+  return ids.map(id => {
+    const v = parseFloat(document.getElementById(id).value);
+    return isNaN(v) ? null : v;
+  });
+}
+
+function onInput() {
+  const [b1,b2,b3,d1,d2,d3] = getVals();
+  const inputs = ['b1','b2','b3','d1','d2','d3'];
+  getVals().forEach((v,i) => {
+    document.getElementById(inputs[i]).classList.toggle('filled', v !== null);
+  });
+
+  const all = [b1,b2,b3,d1,d2,d3];
+  if (all.every(v => v !== null)) {
+    const avg = all.reduce((a,b)=>a+b,0)/6;
+    document.getElementById('avg-val').textContent = avg.toFixed(5);
+  } else {
+    document.getElementById('avg-val').textContent = '— enter all 6 prices —';
+  }
+}
+
+function analyze() {
+  const [b1,b2,b3,d1,d2,d3] = getVals();
+  const all = [b1,b2,b3,d1,d2,d3];
+
+  if (all.some(v => v === null)) {
+    alert('Please enter all 6 prices before analyzing.');
+    return;
+  }
+
+  const avg = all.reduce((a,b)=>a+b,0)/6;
+  const hi  = Math.max(...all);
+  const lo  = Math.min(...all);
+  const rng = hi - lo + 0.00001;
+
+  // ── PRIMARY SIGNAL (your formula exactly) ──
+  let signal = computeSignal(b1,b2,b3,d1,d2,d3,avg,hi,lo,rng);
+  renderSignal(signal);
+
+  // ── CONFIRMATION 1: Momentum Continuation ──
+  let c1txt, c1cls;
+  if      (d3>d2 && d2>d1) { c1txt="✅ STRONG UP — SAFE TO BUY";      c1cls="good"; }
+  else if (d3<d2 && d2<d1) { c1txt="✅ STRONG DOWN — SAFE TO SELL";   c1cls="good"; }
+  else if (d3>d2 && d2<d1) { c1txt="⚠️ MOMENTUM SHIFT — DIP THEN UP"; c1cls="warn"; }
+  else if (d3<d2 && d2>d1) { c1txt="🚨 DECEL TRAP — D3 IS STALLING";  c1cls="bad"; }
+  else                      { c1txt="⚠️ MIXED DIRECTION";              c1cls="warn"; }
+  setConfirm("c1", c1txt, c1cls);
+
+  // ── CONFIRMATION 2: Deceleration Ratio ──
+  let c2txt, c2cls;
+  const d21 = Math.abs(d2-d1);
+  const d32 = Math.abs(d3-d2);
+  if (d21 < 0.000001) {
+    c2txt="⏸ FLAT D1→D2 MOVE — SKIP"; c2cls="warn";
+  } else {
+    const ratio = d32/d21;
+    if      (ratio >= 0.8) { c2txt=`✅ ACCELERATION  (${(ratio*100).toFixed(0)}%) — ENTER OK`;     c2cls="good"; }
+    else if (ratio >= 0.4) { c2txt=`⚠️ SLOWING  (${(ratio*100).toFixed(0)}%) — WEAK SIGNAL`;       c2cls="warn"; }
+    else                   { c2txt=`🚨 DECELERATION  (${(ratio*100).toFixed(0)}%) — HIGH FLIP RISK`; c2cls="bad"; }
+  }
+  setConfirm("c2", c2txt, c2cls);
+
+  // ── CONFIRMATION 3: Position Danger Zone ──
+  let c3txt, c3cls;
+  const pos = (d3-lo)/rng;
+  if      (pos > 0.92) { c3txt=`🚨 EXTREME HIGH ${(pos*100).toFixed(1)}% — REVERSAL ZONE`;  c3cls="bad"; }
+  else if (pos < 0.08) { c3txt=`🚨 EXTREME LOW ${(pos*100).toFixed(1)}% — REVERSAL ZONE`;   c3cls="bad"; }
+  else if (pos >= 0.55){ c3txt=`✅ UPPER ZONE ${(pos*100).toFixed(1)}% — BUY VALID`;         c3cls="good"; }
+  else if (pos <= 0.45){ c3txt=`✅ LOWER ZONE ${(pos*100).toFixed(1)}% — SELL VALID`;        c3cls="good"; }
+  else                  { c3txt=`⚠️ MID ZONE ${(pos*100).toFixed(1)}% — DIRECTION UNCLEAR`;  c3cls="warn"; }
+  setConfirm("c3", c3txt, c3cls);
+
+  // ── CONFIRMATION 4: Trend Consistency ──
+  let c4txt, c4cls;
+  const steps = Math.sign(b2-b1)+Math.sign(b3-b2)+Math.sign(d1-b3)+Math.sign(d2-d1)+Math.sign(d3-d2);
+  const absSteps = Math.abs(steps);
+  if      (absSteps >= 4) { c4txt=`✅ ${absSteps}/5 STEPS ALIGNED — STRONG TREND`;  c4cls="good"; }
+  else if (absSteps >= 2) { c4txt=`⚠️ ${absSteps}/5 STEPS ALIGNED — WEAK TREND`;    c4cls="warn"; }
+  else                    { c4txt=`🚨 ${absSteps}/5 STEPS — CHOPPY CANDLE`;          c4cls="bad"; }
+  setConfirm("c4", c4txt, c4cls);
+
+  // ── CONFIRMATION 5: Range Quality ──
+  let c5txt, c5cls;
+  const pureRng = hi - lo;
+  const pips = (pureRng * 100000).toFixed(1);
+  if      (pureRng >= 0.0008) { c5txt=`✅ STRONG RANGE ${pips} pips — HIGH QUALITY`;   c5cls="good"; }
+  else if (pureRng >= 0.0003) { c5txt=`✅ ADEQUATE RANGE ${pips} pips — OK TO TRADE`;  c5cls="good"; }
+  else if (pureRng >= 0.0001) { c5txt=`⚠️ THIN RANGE ${pips} pips — LOW RELIABILITY`; c5cls="warn"; }
+  else                         { c5txt=`🚨 MICRO RANGE ${pips} pips — SKIP CANDLE`;    c5cls="bad"; }
+  setConfirm("c5", c5txt, c5cls);
+
+  // ── DIAGNOSTICS ──
+  const decelRatio = (Math.abs(d2-d1) > 0.000001) ? (Math.abs(d3-d2)/Math.abs(d2-d1)) : 0;
+  const weighted = 0.5*d3+0.3*d2+0.2*d1;
+
+  setDiag("d-range", (pureRng*100000).toFixed(2)+" pips",
+    pureRng>=0.0003?"good": pureRng>=0.0001?"warn":"bad");
+  setDiag("d-pos", (pos*100).toFixed(1)+"%",
+    (pos>0.92||pos<0.08)?"bad": (pos>=0.55||pos<=0.45)?"good":"warn");
+  setDiag("d-decel", decelRatio.toFixed(2)+"x",
+    decelRatio>=0.8?"good": decelRatio>=0.4?"warn":"bad");
+  setDiag("d-steps", absSteps+"/5",
+    absSteps>=4?"good": absSteps>=2?"warn":"bad");
+  setDiag("d-latemom", ((d3-d2)*100000).toFixed(2)+" pips", (d3-d2)>=0?"good":"warn");
+  setDiag("d-weighted", weighted.toFixed(5), weighted>avg?"good":"warn");
+
+  // ── FINAL VERDICT ──
+  const isSkipSignal  = signal==="SKIP";
+  const hasRedFlag    = c1cls==="bad" || c2cls==="bad" || c3cls==="bad" || c4cls==="bad" || c5cls==="bad";
+  const hasCaution    = c1cls==="warn"|| c2cls==="warn"|| c3cls==="warn"|| c4cls==="warn"|| c5cls==="warn";
+
+  const vbox = document.getElementById('verdict-box');
+  vbox.className = 'verdict-box';
+
+  if (isSkipSignal) {
+    vbox.classList.add('skip-signal');
+    vbox.innerHTML = '<div>⛔ SKIP — FORMULA FILTERED</div><div class="sub">Your formula detected an unsafe candle</div>';
+  } else if (hasRedFlag) {
+    vbox.classList.add('red-flag');
+    vbox.innerHTML = '<div>🚫 DO NOT ENTER</div><div class="sub">RED FLAG detected in confirmations — wait for next candle</div>';
+  } else if (hasCaution) {
+    vbox.classList.add('caution');
+    vbox.innerHTML = '<div>⚠️ CAUTION — WEAK CONFIRMATION</div><div class="sub">Signal exists but confirmations are not clean — your call</div>';
+  } else if (signal==="BUY") {
+    vbox.classList.add('clear-buy');
+    vbox.innerHTML = '<div>✅ ENTER — ⬆ BUY — ALL CLEAR</div><div class="sub">Signal confirmed · All 5 checks passed · Execute now</div>';
+  } else if (signal==="SELL") {
+    vbox.classList.add('clear-sell');
+    vbox.innerHTML = '<div>✅ ENTER — ⬇ SELL — ALL CLEAR</div><div class="sub">Signal confirmed · All 5 checks passed · Execute now</div>';
+  } else {
+    vbox.classList.add('caution');
+    vbox.innerHTML = '<div>⏸ STANDBY</div><div class="sub">Signal unclear</div>';
+  }
+}
+
+function computeSignal(b1,b2,b3,d1,d2,d3,avg,hi,lo,rng) {
+  if ((hi-lo) < 0.0001) return "SKIP";
+  const absD3avg = Math.abs(d3-avg), absD3d2 = Math.abs(d3-d2), absD2d1 = Math.abs(d2-d1);
+  if (absD3avg<0.08*rng && absD3d2<0.12*rng && absD2d1<0.12*rng) return "SKIP";
+  if (Math.sign(d3-d2)!==Math.sign(d2-d1) && Math.abs(d3-d2)>0.75*rng) return "SKIP";
+
+  // Decel trap reversal
+  const posD3 = (d3-lo)/rng;
+  if (d3>avg && (d3-d2)<0.1*rng && (d2-d1)>0.3*rng && posD3>0.75) return "SELL";
+  if (d3<avg && (d2-d3)<0.1*rng && (d1-d2)>0.3*rng && (hi-d3)/rng>0.75) return "BUY";
+
+  // Strong momentum
+  const earlyAvg = (b1+b2+b3)/3;
+  const weighted = 0.5*d3+0.3*d2+0.2*d1;
+  if (weighted>earlyAvg && d3>avg && (d3-d2)>0.14*rng && posD3>0.58) return "BUY";
+  if (weighted<earlyAvg && d3<avg && (d2-d3)>0.14*rng && (hi-d3)/rng>0.58) return "SELL";
+
+  return d3>avg ? "BUY" : "SELL";
+}
+
+function renderSignal(signal) {
+  const box = document.getElementById('signal-box');
+  box.className = 'signal-box';
+  if (signal==="BUY")  { box.classList.add('buy');  box.textContent="⬆  BUY"; }
+  if (signal==="SELL") { box.classList.add('sell'); box.textContent="⬇  SELL"; }
+  if (signal==="SKIP") { box.classList.add('skip'); box.textContent="⛔  SKIP"; }
+}
+
+function setConfirm(id, text, cls) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = `confirm-result ${cls}`;
+}
+
+function setDiag(id, val, cls) {
+  const el = document.getElementById(id);
+  el.textContent = val;
+  el.className = `diag-val ${cls}`;
+}
+
+function clearAll() {
+  ['b1','b2','b3','d1','d2','d3'].forEach(id => {
+    document.getElementById(id).value = '';
+    document.getElementById(id).classList.remove('filled');
+  });
+  document.getElementById('avg-val').textContent = '— enter all 6 prices —';
+  document.getElementById('signal-box').className='signal-box waiting';
+  document.getElementById('signal-box').textContent='⏳  WAITING FOR DATA';
+  ['c1','c2','c3','c4','c5'].forEach(id => {
+    const el=document.getElementById(id);
+    el.className='confirm-result neutral'; el.textContent='—';
+  });
+  const vbox=document.getElementById('verdict-box');
+  vbox.className='verdict-box waiting-v';
+  vbox.innerHTML='<div>⏳ WAITING FOR ANALYSIS</div><div class="sub">enter all 6 prices then click analyze</div>';
+  ['d-range','d-pos','d-decel','d-steps','d-latemom','d-weighted'].forEach(id => {
+    const el=document.getElementById(id);
+    el.textContent='—'; el.className='diag-val';
+  });
+}
+</script>
+</body>
+</html>
