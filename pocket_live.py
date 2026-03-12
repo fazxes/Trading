@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Pocket Option Live Trading Bot - Divine Formula (7 Second)
-Syncs to the platform's 5-minute candle countdown.
-Collects 6 price samples during the candle, then fires trade at 8s remaining.
+Pocket Option Live Trading Bot — Deep Signal Engine v6
+Syncs to the platform's 5-minute candle countdown (5:00 → 0:00).
+Collects 288 prices (1/sec from 5:00 to 0:12), runs 8-component scoring,
+fires trade at 0:08 remaining with 7-second expiry (expires at 0:01).
 
 Usage:
     cd ~/Desktop/Trading && source venv/bin/activate
@@ -14,7 +15,7 @@ import datetime
 import json
 import threading
 import warnings
-from typing import Dict, Optional
+from typing import List, Optional
 
 warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
 
@@ -68,144 +69,294 @@ PASSWORD = "Faze2501-"
 DEMO_MODE = True          # True = demo, False = real account
 ASSET = "EUR/USD OTC"     # Change to any asset the platform supports
 TRADE_AMOUNT = 1          # Dollars per trade
-TRADE_EXPIRY = 7          # Seconds (the 7-second divine formula)
+TRADE_EXPIRY = 7          # Seconds — trade expires at 0:01 remaining
 CANDLE_SECONDS = 300      # 5-minute candle = 300 seconds
-TRADE_AT_REMAINING = 8    # Place trade when this many seconds left
+TRADE_AT_REMAINING = 8    # Place trade at 0:08 remaining
 
-TRADE_ON_CAUTION = False   # True = trade even with yellow warnings
+TRADE_ON_CAUTION = False  # True = trade on borderline scores (35-49%)
+MIN_PAYOUT = 80           # Minimum payout % — bot goes on standby below this
 
-# Price sample schedule: label -> seconds remaining on candle countdown
-SAMPLES = {
-    'B1': 150,  # 2:30 remaining
-    'B2': 105,  # 1:45 remaining
-    'B3': 60,   # 1:00 remaining
-    'D1': 45,   # 0:45 remaining
-    'D2': 30,   # 0:30 remaining
-    'D3': 12,   # 0:12 remaining (TRIGGER — analysis runs here)
-}
+# Price collection: 1 price per second throughout the candle
+COLLECT_UNTIL = 12        # Stop collecting at 0:12 remaining (trigger point)
+MIN_PRICES = 120          # Minimum prices needed for reliable analysis
 
 
 # ═══════════════════════════════════════════════════════════════
-# 7-SECOND ENTRY CONFIRMATION SYSTEM
-# From: EURUSD_7sec_Checklist.html
+# DEEP SIGNAL ENGINE v6
+# Ported 1:1 from: EURUSD_DeepSignal_v6_300sec.html
+# 288 prices → 8-component scoring → BUY / SELL / SKIP / BLOCK
 # ═══════════════════════════════════════════════════════════════
 
-def _sign(x):
-    return (x > 0) - (x < 0)
+PIP = 0.0001
 
 
-def compute_signal(B1, B2, B3, D1, D2, D3):
-    """Primary signal with skip filters, decel trap reversal, and momentum."""
-    all_p = [B1, B2, B3, D1, D2, D3]
-    avg = sum(all_p) / 6
-    hi, lo = max(all_p), min(all_p)
-    rng = hi - lo + 0.00001
-
-    # Skip filters
-    if (hi - lo) < 0.0001:
-        return "SKIP"
-    if abs(D3-avg) < 0.08*rng and abs(D3-D2) < 0.12*rng and abs(D2-D1) < 0.12*rng:
-        return "SKIP"
-    if _sign(D3-D2) != _sign(D2-D1) and abs(D3-D2) > 0.75*rng:
-        return "SKIP"
-
-    # Decel trap reversal
-    pos_d3 = (D3 - lo) / rng
-    if D3 > avg and (D3-D2) < 0.1*rng and (D2-D1) > 0.3*rng and pos_d3 > 0.75:
-        return "SELL"
-    if D3 < avg and (D2-D3) < 0.1*rng and (D1-D2) > 0.3*rng and (hi-D3)/rng > 0.75:
-        return "BUY"
-
-    # Strong momentum
-    early_avg = (B1 + B2 + B3) / 3
-    weighted = 0.5*D3 + 0.3*D2 + 0.2*D1
-    if weighted > early_avg and D3 > avg and (D3-D2) > 0.14*rng and pos_d3 > 0.58:
-        return "BUY"
-    if weighted < early_avg and D3 < avg and (D2-D3) > 0.14*rng and (hi-D3)/rng > 0.58:
-        return "SELL"
-
-    # Fallback
-    return "BUY" if D3 > avg else "SELL"
+def _detect_spikes(pip_changes: List[float], n: int):
+    """Detect fake spikes: single-second move >2.5x rolling std that reverses within 2 seconds."""
+    spikes = [False] * n
+    spike_dir = [0] * n
+    for i in range(5, n - 2):
+        window = pip_changes[max(0, i - 10):i]
+        mean = sum(window) / len(window)
+        std = (sum((x - mean) ** 2 for x in window) / len(window)) ** 0.5 or 0.01
+        move = pip_changes[i]
+        if abs(move) > max(2.5 * std, 1.5):
+            reverse_check = pip_changes[i + 1] + (pip_changes[i + 2] if i + 2 < n else 0)
+            if ((reverse_check > 0) != (move > 0)) and abs(reverse_check) > abs(move) * 0.4:
+                spikes[i] = True
+                spike_dir[i] = 1 if move > 0 else -1
+    return spikes, spike_dir
 
 
-def check_confirmations(B1, B2, B3, D1, D2, D3):
-    """5 confirmation checks. Returns list of (name, status, message).
-    status: 'good', 'warn', or 'bad'."""
-    all_p = [B1, B2, B3, D1, D2, D3]
-    hi, lo = max(all_p), min(all_p)
-    rng = hi - lo + 0.00001
-    results = []
+def _detect_reversals(pip_changes: List[float], spikes: List[bool], n: int):
+    """Detect reversals: 5+ seconds in one direction then 3+ seconds switching."""
+    reversals = [False] * n
+    for i in range(8, n - 3):
+        if spikes[i]:
+            continue
+        prev_sum = sum(pip_changes[i - 5:i])
+        next_sum = sum(pip_changes[i:i + 3])
+        if abs(prev_sum) > 2 and abs(next_sum) > 1.5 and ((prev_sum > 0) != (next_sum > 0)):
+            reversals[i] = True
+    return reversals
 
-    # 1. Momentum Continuation
-    if   D3 > D2 and D2 > D1: results.append(("Momentum",  "good", "STRONG UP"))
-    elif D3 < D2 and D2 < D1: results.append(("Momentum",  "good", "STRONG DOWN"))
-    elif D3 > D2 and D2 < D1: results.append(("Momentum",  "warn", "SHIFT — DIP THEN UP"))
-    elif D3 < D2 and D2 > D1: results.append(("Momentum",  "bad",  "DECEL TRAP"))
-    else:                      results.append(("Momentum",  "warn", "MIXED"))
 
-    # 2. Deceleration Ratio
-    d21 = abs(D2 - D1)
-    d32 = abs(D3 - D2)
-    if d21 < 0.000001:
-        results.append(("Decel Ratio", "warn", "FLAT D1→D2"))
+def run_deep_signal(prices: List[float]) -> dict:
+    """
+    Deep Signal Engine v6 — 8-component scoring system.
+    Takes array of prices (1 per second, from candle open to 0:12 remaining).
+    Returns dict with signal, score, verdict, direction, breakdown.
+    """
+    n = len(prices)
+
+    # ── Second-by-second pip changes ──────────────────────
+    pip_changes = [0.0]
+    for i in range(1, n):
+        pip_changes.append((prices[i] - prices[i - 1]) / PIP)
+
+    # ── Spike & reversal detection ────────────────────────
+    spikes, spike_dir = _detect_spikes(pip_changes, n)
+    reversals = _detect_reversals(pip_changes, spikes, n)
+
+    # ── Key metrics ───────────────────────────────────────
+    open_price = prices[0]
+    close_price = prices[-1]
+    high = max(prices)
+    low = min(prices)
+    range_pips = (high - low) / PIP
+    net_pips = (close_price - open_price) / PIP
+
+    # Spike-filtered net direction
+    filt_net_up = 0.0
+    filt_net_dn = 0.0
+    for i in range(1, n):
+        if spikes[i]:
+            continue
+        if pip_changes[i] > 0:
+            filt_net_up += pip_changes[i]
+        else:
+            filt_net_dn += abs(pip_changes[i])
+
+    if filt_net_up > filt_net_dn:
+        filtered_direction = 'BUY'
+    elif filt_net_dn > filt_net_up:
+        filtered_direction = 'SELL'
     else:
-        ratio = d32 / d21
-        if   ratio >= 0.8: results.append(("Decel Ratio", "good", f"ACCEL {ratio*100:.0f}%"))
-        elif ratio >= 0.4: results.append(("Decel Ratio", "warn", f"SLOWING {ratio*100:.0f}%"))
-        else:              results.append(("Decel Ratio", "bad",  f"DECEL {ratio*100:.0f}%"))
+        filtered_direction = 'FLAT'
+    dir_strength = abs(filt_net_up - filt_net_dn) / (filt_net_up + filt_net_dn + 0.001)
 
-    # 3. Position Danger Zone
-    pos = (D3 - lo) / rng
-    if   pos > 0.92: results.append(("Position", "bad",  f"EXTREME HIGH {pos*100:.1f}%"))
-    elif pos < 0.08: results.append(("Position", "bad",  f"EXTREME LOW {pos*100:.1f}%"))
-    elif pos >= 0.55: results.append(("Position", "good", f"UPPER {pos*100:.1f}%"))
-    elif pos <= 0.45: results.append(("Position", "good", f"LOWER {pos*100:.1f}%"))
-    else:             results.append(("Position", "warn", f"MID {pos*100:.1f}%"))
+    # Last 30 seconds momentum
+    last30 = prices[max(0, n - 30):]
+    last30_net = (last30[-1] - last30[0]) / PIP
 
-    # 4. Trend Consistency (5 steps: B1→B2→B3→D1→D2→D3)
-    steps = (_sign(B2-B1) + _sign(B3-B2) + _sign(D1-B3)
-             + _sign(D2-D1) + _sign(D3-D2))
-    abs_steps = abs(steps)
-    if   abs_steps >= 4: results.append(("Consistency", "good", f"{abs_steps}/5 ALIGNED"))
-    elif abs_steps >= 2: results.append(("Consistency", "warn", f"{abs_steps}/5 WEAK"))
-    else:                results.append(("Consistency", "bad",  f"{abs_steps}/5 CHOPPY"))
+    # Last 10 seconds momentum
+    last10 = prices[max(0, n - 10):]
+    last10_net = (last10[-1] - last10[0]) / PIP
 
-    # 5. Range Quality
-    pure_rng = hi - lo
-    pips = pure_rng * 100000
-    if   pure_rng >= 0.0008: results.append(("Range", "good", f"STRONG {pips:.1f}p"))
-    elif pure_rng >= 0.0003: results.append(("Range", "good", f"ADEQUATE {pips:.1f}p"))
-    elif pure_rng >= 0.0001: results.append(("Range", "warn", f"THIN {pips:.1f}p"))
-    else:                    results.append(("Range", "bad",  f"MICRO {pips:.1f}p"))
+    # Last 5 seconds average pip per second
+    last5_changes = pip_changes[max(0, n - 5):]
+    last5_avg = sum(abs(c) for c in last5_changes) / len(last5_changes)
 
-    return results
+    # Momentum consistency: % of seconds in signal direction (excluding spikes)
+    consistent_seconds = 0
+    total_non_spike = 0
+    for i in range(1, n):
+        if spikes[i]:
+            continue
+        total_non_spike += 1
+        if filtered_direction == 'BUY' and pip_changes[i] > 0:
+            consistent_seconds += 1
+        if filtered_direction == 'SELL' and pip_changes[i] < 0:
+            consistent_seconds += 1
+    consistency = consistent_seconds / total_non_spike if total_non_spike > 0 else 0
 
+    # Acceleration: last 30 seconds faster than first 30 seconds?
+    first30 = prices[:30]
+    first30_net = abs((first30[29] - first30[0]) / PIP) if len(first30) >= 30 else 0
+    last30_abs = abs(last30_net)
+    accelerating = last30_abs > first30_net
 
-def run_analysis(prices: Dict[str, float]) -> dict:
-    B1, B2, B3 = prices['B1'], prices['B2'], prices['B3']
-    D1, D2, D3 = prices['D1'], prices['D2'], prices['D3']
+    # Recent reversal check: reversal in last 20 seconds?
+    last_rev_idx = max((i for i in range(n) if reversals[i]), default=-1)
+    recent_reversal = last_rev_idx >= n - 20 and last_rev_idx != -1
 
-    signal = compute_signal(B1, B2, B3, D1, D2, D3)
-    confirms = check_confirmations(B1, B2, B3, D1, D2, D3)
+    # Recent spike check: fake spike in last 15 seconds?
+    last_spike_idx = max((i for i in range(n) if spikes[i]), default=-1)
+    recent_spike = last_spike_idx >= n - 15 and last_spike_idx != -1
 
-    has_red  = any(c[1] == "bad"  for c in confirms)
-    has_warn = any(c[1] == "warn" for c in confirms)
+    total_spikes = sum(spikes)
+    total_reversals = sum(reversals)
 
-    if signal == "SKIP":
-        verdict = "SKIP"
-    elif has_red:
-        verdict = "NO_ENTRY"
-    elif has_warn:
-        verdict = "CAUTION"
+    # ══════════════════════════════════════════════════════
+    # SCORING SYSTEM (out of 100)
+    # ══════════════════════════════════════════════════════
+    score = 0
+    breakdown = []
+
+    # ① NET DIRECTION (max 20)
+    if range_pips >= 2:
+        s1 = round(min(dir_strength * 30, 20))
+        s1_note = f"{filtered_direction} · {dir_strength * 100:.0f}% strength"
+        s1_verdict = 'STRONG' if s1 >= 15 else 'MODERATE' if s1 >= 8 else 'WEAK'
     else:
-        verdict = signal   # BUY or SELL — all clear
+        s1 = 0
+        s1_note = 'Range too small (<2 pip)'
+        s1_verdict = 'SKIP'
+    score += s1
+    breakdown.append(('① NET DIRECTION', s1_note, f'{s1}/20', s1_verdict))
+
+    # ② LAST 30 SEC MOMENTUM (max 20)
+    l30_aligned = ((filtered_direction == 'BUY' and last30_net > 0) or
+                   (filtered_direction == 'SELL' and last30_net < 0))
+    if l30_aligned:
+        s2 = min(round(abs(last30_net) * 3), 20)
+        s2_note = f"{'+' if last30_net > 0 else ''}{last30_net:.2f}p last 30s"
+        s2_verdict = 'STRONG PUSH' if s2 >= 14 else 'ALIGNED'
+    else:
+        s2 = max(0, 5 - round(abs(last30_net)))
+        s2_note = f"AGAINST signal · {last30_net:.2f}p"
+        s2_verdict = 'WEAK'
+    score += s2
+    breakdown.append(('② LAST 30s MOMENTUM', s2_note, f'{s2}/20', s2_verdict))
+
+    # ③ CONSISTENCY (max 15)
+    s3 = round(consistency * 15)
+    s3_note = f"{consistency * 100:.0f}% seconds aligned"
+    s3_verdict = 'CONSISTENT' if consistency >= 0.65 else 'MIXED' if consistency >= 0.5 else 'NOISY'
+    score += s3
+    breakdown.append(('③ CONSISTENCY', s3_note, f'{s3}/15', s3_verdict))
+
+    # ④ ACCELERATION (max 10)
+    if accelerating:
+        s4 = 10
+        s4_note = f"Last 30s ({last30_abs:.1f}p) > First 30s ({first30_net:.1f}p)"
+        s4_verdict = 'ACCELERATING'
+    else:
+        s4 = 3
+        s4_note = f"Slowing · Last 30s ({last30_abs:.1f}p)"
+        s4_verdict = 'DECELERATING'
+    score += s4
+    breakdown.append(('④ ACCELERATION', s4_note, f'{s4}/10', s4_verdict))
+
+    # ⑤ RANGE SIZE (max 10)
+    if range_pips >= 5:
+        s5, s5_verdict = 10, 'EXCELLENT'
+    elif range_pips >= 3:
+        s5, s5_verdict = 7, 'GOOD'
+    elif range_pips >= 2:
+        s5, s5_verdict = 4, 'BORDERLINE'
+    else:
+        s5, s5_verdict = 0, 'TOO SMALL'
+    s5_note = f"{range_pips:.2f} pips range"
+    score += s5
+    breakdown.append(('⑤ RANGE SIZE', s5_note, f'{s5}/10', s5_verdict))
+
+    # ⑥ FAKE SPIKE PENALTY (max -15)
+    if recent_spike:
+        s6 = -15
+        s6_note = f"Spike in last 15s ({n - last_spike_idx}s ago)"
+        s6_verdict = 'DANGER'
+    elif total_spikes > 3:
+        s6 = -5
+        s6_note = f"{total_spikes} spikes (noisy candle)"
+        s6_verdict = 'CAUTION'
+    else:
+        s6 = 0
+        s6_note = f"{total_spikes} spike(s) · none recent"
+        s6_verdict = 'CLEAN'
+    score += s6
+    breakdown.append(('⑥ SPIKE PENALTY', s6_note, f'{s6}/0', s6_verdict))
+
+    # ⑦ RECENT REVERSAL PENALTY (max -15)
+    if recent_reversal:
+        s7 = -15
+        s7_note = 'Reversal in last 20s · flip risk HIGH'
+        s7_verdict = 'HARD BLOCK'
+    elif total_reversals > 2:
+        s7 = -5
+        s7_note = f"{total_reversals} reversals · choppy"
+        s7_verdict = 'CAUTION'
+    else:
+        s7 = 0
+        s7_note = f"{total_reversals} reversal(s) · none recent"
+        s7_verdict = 'SAFE'
+    score += s7
+    breakdown.append(('⑦ REVERSAL PENALTY', s7_note, f'{s7}/0', s7_verdict))
+
+    # ⑧ LAST 10 SEC ALIGNMENT (max 10)
+    l10_aligned = ((filtered_direction == 'BUY' and last10_net > 0) or
+                   (filtered_direction == 'SELL' and last10_net < 0))
+    if l10_aligned:
+        s8 = min(round(abs(last10_net) * 4), 10)
+        s8_note = f"Last 10s: {'+' if last10_net > 0 else ''}{last10_net:.2f}p"
+        s8_verdict = 'ALIGNED'
+    else:
+        s8 = 0
+        s8_note = 'Last 10s going against signal'
+        s8_verdict = 'MISALIGNED'
+    score += s8
+    breakdown.append(('⑧ LAST 10s ALIGNMENT', s8_note, f'{s8}/10', s8_verdict))
+
+    # Clamp 0-100
+    score = max(0, min(100, score))
+
+    # ══════════════════════════════════════════════════════
+    # FINAL VERDICT
+    # ══════════════════════════════════════════════════════
+    final_signal = filtered_direction
+
+    if recent_reversal and range_pips >= 2:
+        verdict = 'BLOCK'
+        final_signal = 'BLOCK'
+    elif score >= 50 and final_signal in ('BUY', 'SELL'):
+        verdict = f'ENTER {final_signal}'
+    elif score >= 35:
+        verdict = 'BORDERLINE'
+        final_signal = 'SKIP'
+    else:
+        verdict = 'SKIP'
+        final_signal = 'SKIP'
+
+    if range_pips < 2:
+        verdict = 'SKIP · RANGE TOO SMALL'
+        final_signal = 'SKIP'
 
     return {
-        'signal': signal,
-        'confirms': confirms,
-        'verdict': verdict,
-        'has_red': has_red,
-        'has_warn': has_warn,
+        'signal': final_signal,            # BUY, SELL, SKIP, or BLOCK
+        'verdict': verdict,                # Human-readable verdict
+        'score': score,                    # 0-100 confidence
+        'direction': filtered_direction,   # Raw detected direction (BUY/SELL/FLAT)
+        'breakdown': breakdown,            # 8 scoring components
+        'range_pips': range_pips,
+        'net_pips': net_pips,
+        'total_spikes': total_spikes,
+        'total_reversals': total_reversals,
+        'last30_net': last30_net,
+        'last10_net': last10_net,
+        'consistency': consistency,
+        'accelerating': accelerating,
+        'recent_spike': recent_spike,
+        'recent_reversal': recent_reversal,
+        'num_prices': n,
     }
 
 
@@ -329,8 +480,33 @@ def get_live_price() -> Optional[float]:
     return None
 
 
+def get_payout(page: Page) -> Optional[int]:
+    """Read the current payout % from the Pocket Option UI."""
+    try:
+        text = page.evaluate("""() => {
+            // Look for payout percentage near the trading panel
+            const els = document.querySelectorAll('[class*="percent"], [class*="payout"], [class*="profit"]');
+            for (const el of els) {
+                const m = el.textContent.match(/(\\d+)\\s*%/);
+                if (m && parseInt(m[1]) >= 50 && parseInt(m[1]) <= 100) return m[1];
+            }
+            // Fallback: scan all elements containing "%" near trading area
+            const all = document.querySelectorAll('span, div, p');
+            for (const el of all) {
+                const t = el.textContent.trim();
+                const m = t.match(/^\\+?(\\d+)\\s*%$/);
+                if (m && parseInt(m[1]) >= 50 && parseInt(m[1]) <= 100) return m[1];
+            }
+            return null;
+        }""")
+        return int(text) if text else None
+    except Exception:
+        return None
+
+
 # ═══════════════════════════════════════════════════════════════
 # CANDLE SYNC — align to platform's 5-minute candle
+# Countdown: 5:00 → 4:59 → 4:58 → ... → 0:01 → 0:00
 # ═══════════════════════════════════════════════════════════════
 
 def next_candle_end() -> datetime.datetime:
@@ -348,6 +524,12 @@ def next_candle_end() -> datetime.datetime:
 
 def seconds_remaining(candle_end: datetime.datetime) -> float:
     return (candle_end - datetime.datetime.now()).total_seconds()
+
+
+def fmt_countdown(secs: float) -> str:
+    """Format seconds remaining as M:SS countdown (e.g. 4:59, 0:12)."""
+    s = max(0, int(secs))
+    return f"{s // 60}:{s % 60:02d}"
 
 
 def playwright_sleep(page: Page, duration: float):
@@ -391,23 +573,33 @@ def wait_until_remaining(candle_end: datetime.datetime, target_secs: float, page
 def run_candle_cycle(page: Page):
     """
     One full candle cycle:
-      1. Sample prices at B1(2:30), B2(1:45), B3(1:00), D1(45s), D2(30s), D3(12s)
-      2. Run 5-confirmation analysis at D3 (12s remaining)
-      3. Place trade at 8s remaining if all checks pass
+      1. Collect 1 price/sec from 5:00 down to 0:12 (288 prices)
+      2. At 0:12 — stop collecting, run Deep Signal Engine (~4s analysis)
+      3. At 0:08 — place trade if signal says BUY/SELL
+      4. 7-second expiry — trade expires at 0:01 (1s before candle close)
     """
     candle_end = next_candle_end()
     rem = seconds_remaining(candle_end)
 
+    # ── Check payout before doing anything ──────────────
+    payout = get_payout(page)
+    payout_str = f"{payout}%" if payout else "unknown"
+
     print(f"\n{'='*60}")
-    print(f"  CANDLE CYCLE")
-    print(f"  Candle ends: {candle_end.strftime('%H:%M:%S')}  ({rem:.0f}s remaining)")
+    print(f"  CANDLE CYCLE — Deep Signal Engine v6")
+    print(f"  Candle ends: {candle_end.strftime('%H:%M:%S')}  ({fmt_countdown(rem)} remaining)")
+    print(f"  Payout: {payout_str}")
     print(f"{'='*60}")
 
-    # Must have enough time to catch B1 (first sample at 150s remaining).
-    # If we joined mid-candle, skip entirely — no partial data, no guessing.
-    first_sample_time = SAMPLES['B1']  # 150s
-    if rem < first_sample_time + 3:
-        print(f"[SKIP] Only {rem:.0f}s left — need {first_sample_time}s for B1. Waiting for next candle...")
+    if payout is not None and payout < MIN_PAYOUT:
+        print(f"[STANDBY] Payout {payout}% < {MIN_PAYOUT}% — waiting for payout to be more than {MIN_PAYOUT}%")
+        return {'result': None, 'candle_end': candle_end}
+
+    # Need enough collection time (rem must be > COLLECT_UNTIL + MIN_PRICES)
+    collection_time = rem - COLLECT_UNTIL
+    if collection_time < MIN_PRICES:
+        print(f"[SKIP] Only {collection_time:.0f}s of collection time — need {MIN_PRICES}s. "
+              f"Waiting for next candle...")
         return {'result': None, 'candle_end': candle_end}
 
     # Verify WebSocket feed is alive before committing to this candle
@@ -415,88 +607,102 @@ def run_candle_cycle(page: Page):
         print("[SKIP] WebSocket price feed not active — cannot sample. Waiting for next candle...")
         return {'result': None, 'candle_end': candle_end}
 
-    prices = {}
-    sorted_samples = sorted(SAMPLES.items(), key=lambda x: x[1], reverse=True)
-    # B1(150s) → B2(105s) → B3(60s) → D1(45s) → D2(30s) → D3(12s)
+    # ── Collect prices: 1 per second until 0:12 remaining ──
+    # Each price labeled A1 (first second) through A288 (last second at 0:12)
+    prices = []
+    no_price_streak = 0
+    last_log_count = 0
+    next_sample_time = time.time()
 
-    SAMPLE_TOLERANCE = 3  # seconds — max acceptable timing drift
+    print(f"[COLLECT] Starting: A1 → A288 ({fmt_countdown(rem)} → {fmt_countdown(COLLECT_UNTIL)})")
 
-    for label, target_rem in sorted_samples:
-        current_rem = seconds_remaining(candle_end)
-
-        # Wait for the exact sample moment
-        if current_rem > target_rem + 1:
-            print(f"[WAIT] {label} at {target_rem}s remaining (in {current_rem - target_rem:.0f}s)...")
-            wait_until_remaining(candle_end, target_rem, page)
-
-        # Read live price from the WebSocket feed
+    while seconds_remaining(candle_end) > COLLECT_UNTIL:
         price = get_live_price()
-        actual_rem = seconds_remaining(candle_end)
-        drift = abs(actual_rem - target_rem)
+        if price:
+            prices.append(price)
+            no_price_streak = 0
+        else:
+            no_price_streak += 1
+            if no_price_streak >= 5:
+                print(f"[ABORT] WebSocket price lost for 5s during collection. Scrapping candle.")
+                return {'result': None, 'candle_end': candle_end}
 
-        if not price:
-            print(f"[ABORT] {label} — WebSocket price lost. Scrapping candle.")
-            return {'result': None, 'candle_end': candle_end}
+        # Progress log every 60 prices
+        if len(prices) > 0 and len(prices) % 60 == 0 and len(prices) != last_log_count:
+            r = seconds_remaining(candle_end)
+            print(f"[COLLECT] A{len(prices)} · {len(prices)} prices · {fmt_countdown(r)} remaining · "
+                  f"latest: {prices[-1]:.5f}")
+            last_log_count = len(prices)
 
-        if drift > SAMPLE_TOLERANCE:
-            print(f"[ABORT] {label} — sampled at {actual_rem:.1f}s but needed {target_rem}s "
-                  f"(drift {drift:.1f}s > {SAMPLE_TOLERANCE}s tolerance). Scrapping candle.")
-            return {'result': None, 'candle_end': candle_end}
+        # Wait until next 1-second sample point
+        next_sample_time += 1.0
+        wait = next_sample_time - time.time()
+        if wait > 0:
+            playwright_sleep(page, wait)
 
-        prices[label] = price
-        print(f"[SAMPLE] {label} = {price:.5f}  (at {actual_rem:.0f}s remaining, drift {drift:.1f}s)")
+    # ── Collection complete ──────────────────────────────
+    rem = seconds_remaining(candle_end)
+    print(f"[COLLECT] Done — A1 to A{len(prices)} ({len(prices)} prices, at {fmt_countdown(rem)} remaining)")
 
-    # All 6 samples collected within tolerance
-    assert len(prices) == 6, f"Expected 6 prices, got {len(prices)}"
-    print(f"[OK] All 6 samples collected cleanly")
+    if len(prices) < 30:
+        print(f"[SKIP] Only {len(prices)} prices — need at least 30. Scrapping candle.")
+        return {'result': None, 'candle_end': candle_end}
 
-    # ── Run analysis ────────────────────────────────────
+    # ── Run Deep Signal Engine (~4 seconds to analyze) ───
     t0 = time.time()
-    result = run_analysis(prices)
+    result = run_deep_signal(prices)
     t_analysis = (time.time() - t0) * 1000
 
-    signal  = result['signal']
+    signal = result['signal']
+    score = result['score']
     verdict = result['verdict']
+    direction = result['direction']
 
-    print(f"\n[ANALYSIS] {t_analysis:.0f}ms")
-    print(f"  Signal: {signal}")
-    for name, status, msg in result['confirms']:
-        icon = "✓" if status == "good" else ("!" if status == "warn" else "✗")
-        print(f"  [{icon}] {name}: {msg}")
-    print(f"  VERDICT: {verdict}")
+    print(f"\n[ENGINE] Analyzed in {t_analysis:.0f}ms — {result['num_prices']} prices")
+    print(f"  Direction: {direction} ({result['range_pips']:.1f} pip range)")
+    print(f"  Score:     {score}%")
+    for comp, note, sc, verd in result['breakdown']:
+        print(f"    {comp}: {sc} — {note} [{verd}]")
+    print(f"  VERDICT:   {verdict}")
 
-    # ── Should we trade? ─────────────────────────────
-    if verdict == "SKIP":
-        print("[SKIP] Formula filtered — unsafe candle")
-        return {'result': result, 'candle_end': candle_end}
-    if verdict == "NO_ENTRY":
-        print("[SKIP] Red flag in confirmations — no trade")
-        return {'result': result, 'candle_end': candle_end}
-    if verdict == "CAUTION" and not TRADE_ON_CAUTION:
-        print("[SKIP] Weak confirmations — skipping (set TRADE_ON_CAUTION=True to override)")
+    # ── Should we trade? ─────────────────────────────────
+    if signal == 'BLOCK':
+        print("[BLOCK] Reversal detected — DO NOT ENTER")
         return {'result': result, 'candle_end': candle_end}
 
-    direction = signal if verdict in ("BUY", "SELL") else signal
+    if signal == 'SKIP':
+        if score >= 35 and TRADE_ON_CAUTION and direction in ('BUY', 'SELL'):
+            print(f"[CAUTION] Borderline score {score}% — trading anyway (TRADE_ON_CAUTION=True)")
+            trade_direction = direction
+        else:
+            reason = "range too small" if result['range_pips'] < 2 else f"score {score}%"
+            print(f"[SKIP] {reason} — no trade")
+            return {'result': result, 'candle_end': candle_end}
+    else:
+        # signal is BUY or SELL (score >= 50)
+        trade_direction = signal
 
-    # ── Wait for trade entry point: 8s remaining ───────
+    # ── Wait for trade entry point: 0:08 remaining ──────
     rem = seconds_remaining(candle_end)
     if rem > TRADE_AT_REMAINING:
-        print(f"\n[WAIT] Trade fires at {TRADE_AT_REMAINING}s remaining (in {rem - TRADE_AT_REMAINING:.0f}s)...")
+        print(f"\n[WAIT] Trade fires at {fmt_countdown(TRADE_AT_REMAINING)} "
+              f"(in {rem - TRADE_AT_REMAINING:.0f}s)...")
         wait_until_remaining(candle_end, TRADE_AT_REMAINING, page)
 
-    # ── FIRE TRADE ──────────────────────────────────────
+    # ── FIRE TRADE ───────────────────────────────────────
     rem_at_fire = seconds_remaining(candle_end)
 
-    if direction == "BUY":
+    if trade_direction == "BUY":
         click_ms = click_buy(page)
     else:
         click_ms = click_sell(page)
 
-    print(f"\n  >>> {direction} TRADE PLACED <<<")
-    print(f"  Fired at:    {rem_at_fire:.1f}s remaining")
+    print(f"\n  >>> {trade_direction} TRADE PLACED <<<")
+    print(f"  Score:       {score}%")
+    print(f"  Fired at:    {fmt_countdown(rem_at_fire)} remaining")
     print(f"  Click time:  {click_ms:.0f}ms")
     print(f"  Expiry:      {TRADE_EXPIRY}s")
-    print(f"  Expires at:  ~{rem_at_fire - TRADE_EXPIRY:.1f}s remaining")
+    print(f"  Expires at:  ~{fmt_countdown(rem_at_fire - TRADE_EXPIRY)} remaining")
 
     return {'result': result, 'candle_end': candle_end}
 
@@ -504,15 +710,17 @@ def run_candle_cycle(page: Page):
 def main():
     now = datetime.datetime.now()
     print("=" * 60)
-    print("  POCKET BOT - 7sec Entry Confirmation")
-    print(f"  Account: {'DEMO' if DEMO_MODE else 'REAL'}")
-    print(f"  Asset:   {ASSET}")
-    print(f"  Amount:  ${TRADE_AMOUNT}")
-    print(f"  Expiry:  {TRADE_EXPIRY}s")
-    print(f"  Candle:  {CANDLE_SECONDS//60}min")
-    print(f"  Trade at: {TRADE_AT_REMAINING}s remaining")
-    print(f"  Time:    {now.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"  Day:     {'Weekend' if now.weekday() >= 5 else 'Weekday'}")
+    print("  POCKET BOT — Deep Signal Engine v6")
+    print(f"  Account:   {'DEMO' if DEMO_MODE else 'REAL'}")
+    print(f"  Asset:     {ASSET}")
+    print(f"  Amount:    ${TRADE_AMOUNT}")
+    print(f"  Expiry:    {TRADE_EXPIRY}s (expires at 0:01)")
+    print(f"  Candle:    {CANDLE_SECONDS // 60}min (5:00 → 0:00)")
+    print(f"  Collect:   1/sec from 5:00 to 0:{COLLECT_UNTIL:02d}")
+    print(f"  Trade at:  0:{TRADE_AT_REMAINING:02d} remaining")
+    print(f"  Min data:  {MIN_PRICES} prices")
+    print(f"  Time:      {now.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"  Day:       {'Weekend' if now.weekday() >= 5 else 'Weekday'}")
     print("=" * 60)
 
     with sync_playwright() as pw:
@@ -542,7 +750,7 @@ def main():
             print("[PRICE] WARNING: No price ticks received after 30s — check WebSocket connection")
 
         print("\n[READY] Bot is running. Ctrl+C to stop.")
-        print(f"[READY] Will trade every 5-min candle at {TRADE_AT_REMAINING}s remaining.\n")
+        print(f"[READY] Collecting 288 prices/candle, trading at 0:{TRADE_AT_REMAINING:02d} remaining.\n")
 
         try:
             while True:
@@ -550,7 +758,7 @@ def main():
                 # Wait past candle end before starting next cycle
                 rem = seconds_remaining(cycle['candle_end'])
                 if rem > 0:
-                    print(f"\n[WAIT] Candle closes in {rem:.0f}s — waiting for next cycle...")
+                    print(f"\n[WAIT] Candle closes in {fmt_countdown(rem)} — waiting for next cycle...")
                     playwright_sleep(page, rem + 2)
                 else:
                     playwright_sleep(page, 2)

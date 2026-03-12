@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EUR/USD · 300-SEC DEEP SIGNAL ENGINE</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;600;700&display=swap');
+  :root {
+    --bg:#020608; --panel:#060d12; --border:#0e2a35; --border2:#091820;
+    --buy:#00e5a0; --sell:#ff3d6b; --skip:#f0a500; --block:#ff2222;
+    --accent:#00b4d8; --muted:#3a6070; --text:#b8d4dd; --dim:#1a3a4a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--text);font-family:'Rajdhani',sans-serif;min-height:100vh;}
+  body::before{content:'';position:fixed;inset:0;
+    background:repeating-linear-gradient(0deg,transparent,transparent 39px,#0a1e2806 40px),
+    repeating-linear-gradient(90deg,transparent,transparent 39px,#0a1e2806 40px);
+    pointer-events:none;z-index:0;}
+  .wrap{position:relative;z-index:1;max-width:1400px;margin:0 auto;padding:20px 16px 60px;}
+
+  /* HEADER */
+  .header{text-align:center;padding:24px 0 18px;border-bottom:1px solid var(--border);margin-bottom:22px;}
+  .badge{display:inline-block;font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:4px;
+    color:var(--accent);background:#00b4d810;border:1px solid #00b4d825;padding:4px 16px;margin-bottom:10px;}
+  h1{font-family:'Orbitron',monospace;font-size:clamp(16px,3vw,30px);font-weight:900;color:#fff;
+    letter-spacing:2px;text-shadow:0 0 30px #00b4d840;}
+  h1 span{color:var(--accent);}
+  .sub{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--muted);margin-top:7px;letter-spacing:2px;}
+
+  /* LAYOUT */
+  .main-grid{display:grid;grid-template-columns:360px 1fr;gap:20px;}
+  @media(max-width:900px){.main-grid{grid-template-columns:1fr;}}
+
+  /* PANELS */
+  .panel{background:var(--panel);border:1px solid var(--border);padding:18px;margin-bottom:16px;}
+  .ptitle{font-family:'Orbitron',monospace;font-size:10px;letter-spacing:3px;color:var(--accent);
+    margin-bottom:13px;display:flex;align-items:center;gap:10px;}
+  .ptitle::after{content:'';flex:1;height:1px;background:var(--border);}
+
+  /* INPUT */
+  textarea.bulk{width:100%;background:#020d12;border:1px solid var(--border);
+    color:#e0f0f5;font-family:'Share Tech Mono',monospace;font-size:12px;
+    padding:12px;outline:none;resize:vertical;min-height:260px;line-height:1.85;transition:border-color 0.2s;}
+  textarea.bulk:focus{border-color:var(--accent);}
+  .hint{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);margin-top:7px;line-height:1.8;}
+  .btn-main{font-family:'Orbitron',monospace;font-size:12px;letter-spacing:2px;padding:13px;
+    background:linear-gradient(135deg,#00b4d8,#007aa8);border:none;color:#000;
+    font-weight:700;cursor:pointer;width:100%;margin-top:10px;transition:all 0.2s;}
+  .btn-main:hover{filter:brightness(1.15);}
+  .btn-sec{font-family:'Share Tech Mono',monospace;font-size:11px;padding:8px 14px;
+    background:transparent;border:1px solid var(--border);color:var(--muted);
+    cursor:pointer;transition:all 0.2s;margin-top:7px;width:100%;}
+  .btn-sec:hover{border-color:var(--accent);color:var(--accent);}
+
+  /* SIGNAL BOX — BIG */
+  .signal-mega{
+    border:2px solid var(--border);background:#020d12;
+    padding:30px 24px;text-align:center;margin-bottom:16px;
+    position:relative;overflow:hidden;transition:border-color 0.4s,box-shadow 0.4s;
+  }
+  .signal-mega.BUY{border-color:var(--buy);box-shadow:0 0 40px #00e5a030;}
+  .signal-mega.SELL{border-color:var(--sell);box-shadow:0 0 40px #ff3d6b30;}
+  .signal-mega.SKIP{border-color:var(--skip);box-shadow:0 0 20px #f0a50020;}
+  .signal-mega.BLOCK{border-color:var(--block);box-shadow:0 0 40px #ff222230;}
+  .signal-word{font-family:'Orbitron',monospace;font-size:clamp(28px,5vw,52px);font-weight:900;
+    letter-spacing:4px;line-height:1;}
+  .signal-word.BUY{color:var(--buy);text-shadow:0 0 30px #00e5a060;}
+  .signal-word.SELL{color:var(--sell);text-shadow:0 0 30px #ff3d6b60;}
+  .signal-word.SKIP{color:var(--skip);}
+  .signal-word.BLOCK{color:var(--block);text-shadow:0 0 30px #ff222260;}
+  .signal-sub{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--muted);
+    margin-top:8px;letter-spacing:2px;}
+  .conf-bar-wrap{margin:14px 0 6px;}
+  .conf-label{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);
+    letter-spacing:2px;margin-bottom:6px;display:flex;justify-content:space-between;}
+  .conf-bar-bg{height:8px;background:var(--dim);overflow:hidden;}
+  .conf-bar-fill{height:100%;width:0%;transition:width 0.6s ease;background:var(--accent);}
+  .conf-bar-fill.BUY{background:linear-gradient(90deg,#00b4d8,#00e5a0);}
+  .conf-bar-fill.SELL{background:linear-gradient(90deg,#ff3d6b,#ff7090);}
+  .conf-bar-fill.SKIP{background:var(--skip);}
+  .conf-bar-fill.BLOCK{background:var(--block);}
+
+  /* SCORE CARDS */
+  .score-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:16px;}
+  .score-card{background:#020d12;border:1px solid var(--border);padding:12px 14px;}
+  .sc-label{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;margin-bottom:4px;}
+  .sc-val{font-family:'Orbitron',monospace;font-size:20px;font-weight:700;color:#fff;}
+  .sc-val.green{color:var(--buy);}
+  .sc-val.red{color:var(--sell);}
+  .sc-val.yellow{color:var(--skip);}
+  .sc-note{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);margin-top:3px;}
+
+  /* BREAKDOWN TABLE */
+  .breakdown{width:100%;border-collapse:collapse;font-family:'Share Tech Mono',monospace;font-size:11px;margin-bottom:16px;}
+  .breakdown th{background:#030f16;color:var(--muted);font-size:9px;letter-spacing:2px;
+    padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);}
+  .breakdown td{padding:9px 12px;border-bottom:1px solid var(--border2);vertical-align:top;}
+  .breakdown tr:hover td{background:#060d1290;}
+  .tag{display:inline-block;font-size:10px;padding:2px 8px;border:1px solid;}
+  .tag.g{color:var(--buy);border-color:#00e5a040;background:#00e5a010;}
+  .tag.r{color:var(--sell);border-color:#ff3d6b40;background:#ff3d6b10;}
+  .tag.y{color:var(--skip);border-color:#f0a50040;background:#f0a50010;}
+  .tag.b{color:var(--block);border-color:#ff222240;background:#ff222210;}
+
+  /* CHART */
+  canvas{width:100%!important;background:#020d12;border:1px solid var(--border);display:block;}
+
+  /* SECOND-BY-SECOND TABLE */
+  .sec-table-wrap{max-height:380px;overflow-y:auto;border:1px solid var(--border);}
+  table.sec{width:100%;border-collapse:collapse;font-family:'Share Tech Mono',monospace;font-size:11px;}
+  table.sec thead th{position:sticky;top:0;background:#030f16;color:var(--muted);
+    font-size:9px;letter-spacing:2px;padding:8px 10px;text-align:center;border-bottom:1px solid var(--border);}
+  table.sec tbody td{padding:6px 10px;text-align:center;border-bottom:1px solid var(--border2);}
+  table.sec tbody tr:hover td{background:#060d1290;}
+  .pip-up{color:var(--buy);}
+  .pip-dn{color:var(--sell);}
+  .pip-flat{color:var(--muted);}
+  .spike-flag{color:var(--sell);font-weight:700;}
+  .rev-flag{color:var(--skip);font-weight:700;}
+  .zone-tag{font-size:9px;padding:1px 6px;border:1px solid;}
+  .zone-b{color:var(--buy);border-color:#00e5a030;}
+  .zone-s{color:var(--sell);border-color:#ff3d6b30;}
+  .zone-n{color:var(--muted);border-color:var(--dim);}
+
+  ::-webkit-scrollbar{width:5px;height:5px;}
+  ::-webkit-scrollbar-track{background:var(--bg);}
+  ::-webkit-scrollbar-thumb{background:var(--border);}
+  ::-webkit-scrollbar-thumb:hover{background:var(--accent);}
+
+  .empty-msg{text-align:center;padding:50px;font-family:'Share Tech Mono',monospace;
+    font-size:12px;color:var(--muted);}
+
+  .info-row{display:flex;justify-content:space-between;padding:7px 0;
+    border-bottom:1px solid var(--border2);font-size:13px;}
+  .info-row span:first-child{color:var(--muted);font-family:'Share Tech Mono',monospace;font-size:11px;}
+  .info-row span:last-child{color:var(--text);font-weight:600;}
+
+  .alert-box{background:#020d12;border-left:3px solid;padding:10px 14px;
+    margin-bottom:8px;font-family:'Share Tech Mono',monospace;font-size:11px;line-height:1.7;}
+  .alert-box.buy{border-color:var(--buy);color:var(--buy);}
+  .alert-box.sell{border-color:var(--sell);color:var(--sell);}
+  .alert-box.warn{border-color:var(--skip);color:var(--skip);}
+  .alert-box.block{border-color:var(--block);color:var(--block);}
+  .alert-box.info{border-color:var(--accent);color:var(--accent);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="badge">⚡ EUR/USD OTC · ONE CANDLE · 300 SECONDS</div>
+    <h1>DEEP SIGNAL ENGINE <span>v6</span></h1>
+    <div class="sub">PASTE 300 PRICES (1 PER SECOND) → GET SIGNAL AT 7-8 SEC REMAINING · 92% PAYOUT</div>
+  </div>
+
+  <div class="main-grid">
+
+    <!-- LEFT: INPUT -->
+    <div>
+      <div class="panel">
+        <div class="ptitle">📋 PASTE 300 PRICES</div>
+        <textarea class="bulk" id="raw-input"
+          placeholder="Paste your 300 prices here.
+One price per second, from second 300 down to second 12.
+
+Example:
+1.08500
+1.08501
+1.08499
+1.08503
+...
+(288 more lines)
+1.08541  ← second 12 (last)
+
+Your bot stops collecting at second 12.
+Signal fires at second 7-8.
+Accepts: one per line, comma, or space separated."></textarea>
+        <div class="hint">
+          ✅ 300 numbers = 1 candle (5 minutes, 1 price/sec)<br>
+          ✅ First number = second 300 (candle open)<br>
+          ✅ Last number = second 12 (trigger point)<br>
+          ✅ Signal executes at second 7–8
+        </div>
+        <button class="btn-main" onclick="runEngine()">⚡ CALCULATE SIGNAL</button>
+        <button class="btn-sec" onclick="loadDemo()">LOAD DEMO DATA (300 prices)</button>
+        <button class="btn-sec" onclick="clearAll()">CLEAR</button>
+      </div>
+
+      <!-- ALERTS -->
+      <div id="alerts-wrap" style="display:none">
+        <div class="panel">
+          <div class="ptitle">⚠️ DETECTED EVENTS</div>
+          <div id="alerts-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: RESULTS -->
+    <div>
+
+      <!-- BIG SIGNAL -->
+      <div class="signal-mega" id="sig-mega">
+        <div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--muted);letter-spacing:3px;margin-bottom:12px;">SIGNAL</div>
+        <div class="signal-word" id="sig-word" style="color:var(--muted);">WAITING</div>
+        <div class="signal-sub" id="sig-sub">Paste 300 prices and click Calculate</div>
+        <div class="conf-bar-wrap">
+          <div class="conf-label"><span>CONFIDENCE</span><span id="conf-pct">0%</span></div>
+          <div class="conf-bar-bg"><div class="conf-bar-fill" id="conf-fill"></div></div>
+        </div>
+      </div>
+
+      <!-- SCORE CARDS -->
+      <div class="score-grid" id="score-grid">
+        <div class="score-card"><div class="sc-label">TOTAL SCORE</div><div class="sc-val" id="sc-total">—</div><div class="sc-note" id="sc-total-note">—</div></div>
+        <div class="score-card"><div class="sc-label">MOMENTUM</div><div class="sc-val" id="sc-mom">—</div><div class="sc-note" id="sc-mom-note">—</div></div>
+        <div class="score-card"><div class="sc-label">TOTAL RANGE</div><div class="sc-val" id="sc-range">—</div><div class="sc-note">pip (high–low)</div></div>
+        <div class="score-card"><div class="sc-label">NET DIRECTION</div><div class="sc-val" id="sc-net">—</div><div class="sc-note" id="sc-net-note">open → last</div></div>
+        <div class="score-card"><div class="sc-label">FAKE SPIKES</div><div class="sc-val" id="sc-spikes">—</div><div class="sc-note" id="sc-spike-note">detected</div></div>
+        <div class="score-card"><div class="sc-label">REVERSALS</div><div class="sc-val" id="sc-revs">—</div><div class="sc-note" id="sc-rev-note">detected</div></div>
+        <div class="score-card"><div class="sc-label">FINAL 30 SEC</div><div class="sc-val" id="sc-f30">—</div><div class="sc-note" id="sc-f30-note">momentum</div></div>
+        <div class="score-card"><div class="sc-label">LAST 5 SEC AVG</div><div class="sc-val" id="sc-last5">—</div><div class="sc-note">pips/sec</div></div>
+      </div>
+
+      <!-- CHART -->
+      <div class="panel" style="padding:14px;">
+        <div class="ptitle">📈 PRICE CHART (300 SECONDS)</div>
+        <canvas id="price-chart" height="180"></canvas>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- FULL BREAKDOWN -->
+  <div id="breakdown-wrap" style="display:none">
+    <div class="panel">
+      <div class="ptitle">🔬 FORMULA BREAKDOWN</div>
+      <table class="breakdown" id="breakdown-table">
+        <thead><tr>
+          <th>COMPONENT</th><th>VALUE</th><th>SCORE</th><th>VERDICT</th>
+        </tr></thead>
+        <tbody id="breakdown-body"></tbody>
+      </table>
+    </div>
+
+    <!-- SECOND BY SECOND -->
+    <div class="panel">
+      <div class="ptitle">⏱ SECOND-BY-SECOND ANALYSIS</div>
+      <div class="sec-table-wrap">
+        <table class="sec">
+          <thead><tr>
+            <th>SEC</th>
+            <th>PRICE</th>
+            <th>PIP CHANGE</th>
+            <th>CUMULATIVE</th>
+            <th>GAP FLAG</th>
+            <th>SPIKE</th>
+            <th>REVERSAL</th>
+            <th>ZONE</th>
+          </tr></thead>
+          <tbody id="sec-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ============================================================
+// PARSE INPUT
+// ============================================================
+function parseNums(text) {
+  return text.replace(/[,;\t\r]/g,' ').split(/\s+/)
+    .map(s => parseFloat(s)).filter(n => !isNaN(n) && n > 0);
+}
+
+// ============================================================
+// MAIN ENGINE
+// ============================================================
+function runEngine() {
+  const text = document.getElementById('raw-input').value.trim();
+  if (!text) { alert('Please paste your 300 prices first.'); return; }
+  const prices = parseNums(text);
+  if (prices.length < 30) { alert('Need at least 30 prices. Got: ' + prices.length); return; }
+  if (prices.length > 300) prices.splice(300);
+
+  const n = prices.length;
+  const pip = 0.0001;
+
+  // ---- SECOND LABELS (countdown from n down to 12, or fewer)
+  // Index 0 = highest second (300 or n), index n-1 = lowest second (~12)
+  const seconds = [];
+  for (let i = 0; i < n; i++) seconds.push(n - i + 12 - 1);
+  // last index = second 12 (trigger)
+
+  // ============================================================
+  // COMPUTE SECOND-BY-SECOND STATS
+  // ============================================================
+  const pipChanges = [0]; // change from previous second
+  for (let i = 1; i < n; i++) {
+    pipChanges.push((prices[i] - prices[i-1]) / pip);
+  }
+
+  // Cumulative pip move from open
+  const cumulative = prices.map(p => (p - prices[0]) / pip);
+
+  // ---- SPIKE DETECTION
+  // A spike = single-second move that is >2.5x the rolling std dev of last 10 moves,
+  // AND reverses in the next 1-2 seconds (fake — price comes back)
+  const spikes = new Array(n).fill(false);
+  const spikeDir = new Array(n).fill(0);
+  for (let i = 5; i < n - 2; i++) {
+    const window = pipChanges.slice(Math.max(0, i-10), i);
+    const mean = window.reduce((a,b)=>a+b,0)/window.length;
+    const std = Math.sqrt(window.reduce((a,b)=>a+(b-mean)**2,0)/window.length) || 0.01;
+    const move = pipChanges[i];
+    if (Math.abs(move) > Math.max(2.5 * std, 1.5)) {
+      // Check if it reverses in next 2 seconds
+      const reverseCheck = pipChanges[i+1] + (pipChanges[i+2] || 0);
+      if (Math.sign(reverseCheck) !== Math.sign(move) && Math.abs(reverseCheck) > Math.abs(move) * 0.4) {
+        spikes[i] = true;
+        spikeDir[i] = Math.sign(move); // direction of fake spike
+      }
+    }
+  }
+
+  // ---- REVERSAL DETECTION
+  // A reversal = price was moving in one direction for 5+ seconds, then switches for 3+ seconds
+  const reversals = new Array(n).fill(false);
+  for (let i = 8; i < n - 3; i++) {
+    if (spikes[i]) continue; // skip spikes
+    const prevMoves = pipChanges.slice(i-5, i);
+    const nextMoves = pipChanges.slice(i, i+3);
+    const prevSum = prevMoves.reduce((a,b)=>a+b,0);
+    const nextSum = nextMoves.reduce((a,b)=>a+b,0);
+    if (Math.abs(prevSum) > 2 && Math.abs(nextSum) > 1.5 && Math.sign(prevSum) !== Math.sign(nextSum)) {
+      reversals[i] = true;
+    }
+  }
+
+  // ---- GAP DETECTION (large jump between seconds — >1.5 pip)
+  const gaps = pipChanges.map(c => Math.abs(c) >= 1.5);
+
+  // ============================================================
+  // ZONES: Divide candle into 5 zones
+  // ============================================================
+  const zoneSize = Math.floor(n / 5);
+  function getZone(idx) {
+    const z = Math.floor(idx / zoneSize);
+    return Math.min(z, 4); // 0=open, 4=close
+  }
+
+  // ============================================================
+  // KEY METRICS
+  // ============================================================
+  const open = prices[0];
+  const close = prices[n-1];
+  const high = Math.max(...prices);
+  const low = Math.min(...prices);
+  const rangePips = (high - low) / pip;
+  const netPips = (close - open) / pip;
+
+  // Spike-filtered net direction (ignore spike seconds)
+  let filtNetUp = 0, filtNetDn = 0;
+  for (let i = 1; i < n; i++) {
+    if (spikes[i]) continue;
+    if (pipChanges[i] > 0) filtNetUp += pipChanges[i];
+    else filtNetDn += Math.abs(pipChanges[i]);
+  }
+  const filteredDirection = filtNetUp > filtNetDn ? 'BUY' : filtNetDn > filtNetUp ? 'SELL' : 'FLAT';
+  const dirStrength = Math.abs(filtNetUp - filtNetDn) / (filtNetUp + filtNetDn + 0.001);
+
+  // Last 30 seconds momentum
+  const last30 = prices.slice(Math.max(0, n-30));
+  const last30Net = (last30[last30.length-1] - last30[0]) / pip;
+
+  // Last 10 seconds momentum
+  const last10 = prices.slice(Math.max(0, n-10));
+  const last10Net = (last10[last10.length-1] - last10[0]) / pip;
+
+  // Last 5 seconds avg pip per second
+  const last5Changes = pipChanges.slice(Math.max(0, n-5));
+  const last5Avg = last5Changes.reduce((a,b)=>a+Math.abs(b),0) / last5Changes.length;
+
+  // Momentum consistency: % of seconds in signal direction (excluding spikes)
+  let consistentSeconds = 0, totalNonSpike = 0;
+  for (let i = 1; i < n; i++) {
+    if (spikes[i]) continue;
+    totalNonSpike++;
+    if (filteredDirection === 'BUY' && pipChanges[i] > 0) consistentSeconds++;
+    if (filteredDirection === 'SELL' && pipChanges[i] < 0) consistentSeconds++;
+  }
+  const consistency = totalNonSpike > 0 ? consistentSeconds / totalNonSpike : 0;
+
+  // Acceleration: is the last 30 seconds FASTER than the first 30 seconds?
+  const first30 = prices.slice(0, 30);
+  const first30Net = Math.abs((first30[29] - first30[0]) / pip);
+  const last30Abs = Math.abs(last30Net);
+  const accelerating = last30Abs > first30Net;
+
+  // Last reversal check: did price reverse in last 20 seconds?
+  const lastRevIdx = reversals.lastIndexOf(true);
+  const recentReversal = lastRevIdx >= n - 20 && lastRevIdx !== -1;
+
+  // Last spike check: fake spike in last 15 seconds?
+  const lastSpikeIdx = spikes.lastIndexOf(true);
+  const recentSpike = lastSpikeIdx >= n - 15 && lastSpikeIdx !== -1;
+
+  // Count all spikes and reversals
+  const totalSpikes = spikes.filter(Boolean).length;
+  const totalReversals = reversals.filter(Boolean).length;
+
+  // ============================================================
+  // SCORING SYSTEM (out of 100 → convert to confidence %)
+  // ============================================================
+  let score = 0;
+  const breakdown = [];
+
+  // ① NET DIRECTION (max 20)
+  let s1 = 0, s1note = '', s1verdict = '';
+  if (rangePips >= 2) {
+    const pct = Math.min(dirStrength * 30, 20);
+    s1 = Math.round(pct);
+    s1note = filteredDirection + ' · ' + (dirStrength*100).toFixed(0) + '% strength';
+    s1verdict = s1 >= 15 ? 'STRONG' : s1 >= 8 ? 'MODERATE' : 'WEAK';
+  } else {
+    s1 = 0; s1note = 'Range too small (<2 pip)'; s1verdict = 'SKIP';
+  }
+  score += s1;
+  breakdown.push(['① NET DIRECTION (spike-filtered)', s1note, s1 + ' / 20', s1verdict]);
+
+  // ② LAST 30 SEC MOMENTUM (max 20)
+  let s2 = 0, s2note = '', s2verdict = '';
+  const l30aligned = (filteredDirection === 'BUY' && last30Net > 0) || (filteredDirection === 'SELL' && last30Net < 0);
+  if (l30aligned) {
+    s2 = Math.min(Math.round(Math.abs(last30Net) * 3), 20);
+    s2note = (last30Net > 0 ? '+' : '') + last30Net.toFixed(2) + ' pips last 30s';
+    s2verdict = s2 >= 14 ? 'STRONG PUSH' : 'ALIGNED';
+  } else {
+    s2 = Math.max(0, 5 - Math.round(Math.abs(last30Net)));
+    s2note = 'AGAINST signal · ' + last30Net.toFixed(2) + ' pips';
+    s2verdict = 'WEAK';
+  }
+  score += s2;
+  breakdown.push(['② LAST 30s MOMENTUM', s2note, s2 + ' / 20', s2verdict]);
+
+  // ③ CONSISTENCY (max 15)
+  let s3 = Math.round(consistency * 15);
+  let s3note = (consistency*100).toFixed(0) + '% seconds in signal direction';
+  let s3verdict = consistency >= 0.65 ? 'CONSISTENT' : consistency >= 0.5 ? 'MIXED' : 'NOISY';
+  score += s3;
+  breakdown.push(['③ CONSISTENCY (% seconds aligned)', s3note, s3 + ' / 15', s3verdict]);
+
+  // ④ ACCELERATION (max 10)
+  let s4 = 0, s4note = '', s4verdict = '';
+  if (accelerating) {
+    s4 = 10; s4note = 'Last 30s (' + last30Abs.toFixed(1) + 'p) > First 30s (' + first30Net.toFixed(1) + 'p)';
+    s4verdict = 'ACCELERATING ✓';
+  } else {
+    s4 = 3; s4note = 'Slowing down · Last 30s (' + last30Abs.toFixed(1) + 'p)'; s4verdict = 'DECELERATING';
+  }
+  score += s4;
+  breakdown.push(['④ ACCELERATION', s4note, s4 + ' / 10', s4verdict]);
+
+  // ⑤ RANGE SIZE (max 10)
+  let s5 = 0, s5note = '', s5verdict = '';
+  if (rangePips >= 5) { s5 = 10; s5verdict = 'EXCELLENT'; }
+  else if (rangePips >= 3) { s5 = 7; s5verdict = 'GOOD'; }
+  else if (rangePips >= 2) { s5 = 4; s5verdict = 'BORDERLINE'; }
+  else { s5 = 0; s5verdict = 'TOO SMALL'; }
+  s5note = rangePips.toFixed(2) + ' pips total range';
+  score += s5;
+  breakdown.push(['⑤ RANGE SIZE', s5note, s5 + ' / 10', s5verdict]);
+
+  // ⑥ FAKE SPIKE PENALTY (max -15)
+  let s6 = 0, s6note = '', s6verdict = '';
+  if (recentSpike) {
+    s6 = -15; s6note = 'Spike in last 15s (candle ' + (n - lastSpikeIdx) + 's ago)'; s6verdict = '⚠️ DANGER';
+  } else if (totalSpikes > 3) {
+    s6 = -5; s6note = totalSpikes + ' spikes detected (noisy candle)'; s6verdict = 'CAUTION';
+  } else {
+    s6 = 0; s6note = totalSpikes + ' spike(s) · none recent'; s6verdict = 'CLEAN ✓';
+  }
+  score += s6;
+  breakdown.push(['⑥ FAKE SPIKE PENALTY', s6note, s6 + ' / 0', s6verdict]);
+
+  // ⑦ RECENT REVERSAL PENALTY (max -15)
+  let s7 = 0, s7note = '', s7verdict = '';
+  if (recentReversal) {
+    s7 = -15; s7note = 'Reversal in last 20s · flip risk HIGH'; s7verdict = '🚫 HARD BLOCK';
+  } else if (totalReversals > 2) {
+    s7 = -5; s7note = totalReversals + ' reversals · choppy candle'; s7verdict = 'CAUTION';
+  } else {
+    s7 = 0; s7note = totalReversals + ' reversal(s) · none recent'; s7verdict = 'SAFE ✓';
+  }
+  score += s7;
+  breakdown.push(['⑦ REVERSAL PENALTY', s7note, s7 + ' / 0', s7verdict]);
+
+  // ⑧ LAST 10 SEC ALIGNMENT (max 10)
+  let s8 = 0, s8note = '', s8verdict = '';
+  const l10aligned = (filteredDirection === 'BUY' && last10Net > 0) || (filteredDirection === 'SELL' && last10Net < 0);
+  if (l10aligned) {
+    s8 = Math.min(Math.round(Math.abs(last10Net) * 4), 10);
+    s8note = 'Last 10s: ' + (last10Net > 0 ? '+' : '') + last10Net.toFixed(2) + ' pips';
+    s8verdict = 'ALIGNED ✓';
+  } else {
+    s8 = 0; s8note = 'Last 10s going against signal'; s8verdict = 'MISALIGNED';
+  }
+  score += s8;
+  breakdown.push(['⑧ LAST 10s ALIGNMENT', s8note, s8 + ' / 10', s8verdict]);
+
+  // Clamp score 0-100
+  score = Math.max(0, Math.min(100, score));
+
+  // ============================================================
+  // FINAL VERDICT
+  // ============================================================
+  let finalSignal = filteredDirection;
+  let verdict = '';
+
+  if (recentReversal && rangePips >= 2) {
+    verdict = 'HARD BLOCK';
+    finalSignal = 'BLOCK';
+  } else if (score >= 70) {
+    verdict = finalSignal === 'BUY' ? 'ENTER BUY' : finalSignal === 'SELL' ? 'ENTER SELL' : 'SKIP';
+  } else if (score >= 50) {
+    verdict = finalSignal === 'BUY' ? 'ENTER BUY' : finalSignal === 'SELL' ? 'ENTER SELL' : 'SKIP';
+  } else if (score >= 35) {
+    verdict = 'BORDERLINE — YOUR CALL';
+    finalSignal = 'SKIP';
+  } else {
+    verdict = 'SKIP';
+    finalSignal = 'SKIP';
+  }
+
+  if (rangePips < 2) { verdict = 'SKIP · RANGE TOO SMALL'; finalSignal = 'SKIP'; }
+
+  // ============================================================
+  // RENDER RESULTS
+  // ============================================================
+  renderSignal(finalSignal, verdict, score);
+  renderScoreCards(score, filteredDirection, dirStrength, rangePips, netPips, totalSpikes, totalReversals, last30Net, last5Avg);
+  renderBreakdown(breakdown);
+  renderSecondTable(prices, pipChanges, cumulative, spikes, reversals, gaps, seconds, n);
+  renderAlerts(recentSpike, recentReversal, totalSpikes, totalReversals, accelerating, consistency, last30Net, filteredDirection, score, lastSpikeIdx, lastRevIdx, n);
+  drawChart(prices, spikes, reversals, n);
+
+  document.getElementById('breakdown-wrap').style.display = 'block';
+  document.getElementById('alerts-wrap').style.display = 'block';
+  document.getElementById('breakdown-wrap').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+// ============================================================
+// RENDER FUNCTIONS
+// ============================================================
+function renderSignal(sig, verdict, score) {
+  const mega = document.getElementById('sig-mega');
+  mega.className = 'signal-mega ' + sig;
+  const word = document.getElementById('sig-word');
+  word.className = 'signal-word ' + sig;
+  word.textContent = verdict;
+  document.getElementById('sig-sub').textContent =
+    sig === 'BUY' ? '⚡ ENTER AT 7-8 SECONDS REMAINING' :
+    sig === 'SELL' ? '⚡ ENTER AT 7-8 SECONDS REMAINING' :
+    sig === 'BLOCK' ? '🚫 DO NOT ENTER — REVERSAL DETECTED' :
+    '⏭ SKIP THIS CANDLE';
+  document.getElementById('conf-pct').textContent = score + '%';
+  const fill = document.getElementById('conf-fill');
+  fill.style.width = score + '%';
+  fill.className = 'conf-bar-fill ' + sig;
+}
+
+function renderScoreCards(score, dir, strength, range, net, spikes, revs, l30, l5avg) {
+  const pip = s => s >= 70 ? 'green' : s >= 40 ? 'yellow' : 'red';
+  setCard('sc-total', score + '%', pip(score), score >= 70 ? '✅ TAKE TRADE' : score >= 50 ? '⚡ CAUTION' : '⏭ SKIP');
+  setCard('sc-mom', (strength*100).toFixed(0) + '%', strength > 0.6 ? 'green' : strength > 0.45 ? 'yellow' : 'red', dir + ' bias');
+  setCard('sc-range', range.toFixed(1), range >= 3 ? 'green' : range >= 2 ? 'yellow' : 'red', '');
+  setCard('sc-net', (net >= 0 ? '+' : '') + net.toFixed(2), net > 0 ? 'green' : net < 0 ? 'red' : '', 'open → last');
+  setCard('sc-spikes', spikes, spikes === 0 ? 'green' : spikes <= 2 ? 'yellow' : 'red', spikes === 0 ? 'clean candle ✓' : 'detected');
+  setCard('sc-revs', revs, revs === 0 ? 'green' : revs <= 1 ? 'yellow' : 'red', revs === 0 ? 'no reversals ✓' : 'flip risk');
+  setCard('sc-f30', (l30 >= 0 ? '+' : '') + l30.toFixed(2), (dir==='BUY'&&l30>0)||(dir==='SELL'&&l30<0) ? 'green' : 'red', 'pip last 30s');
+  setCard('sc-last5', l5avg.toFixed(2), l5avg >= 0.5 ? 'green' : 'yellow', 'pip/sec speed');
+}
+
+function setCard(id, val, cls, note) {
+  document.getElementById(id).textContent = val;
+  document.getElementById(id).className = 'sc-val ' + cls;
+  const ni = document.getElementById(id + '-note');
+  if (ni) ni.textContent = note;
+}
+
+function renderBreakdown(rows) {
+  const body = document.getElementById('breakdown-body');
+  body.innerHTML = rows.map(([comp, val, sc, verd]) => {
+    const cls = verd.includes('STRONG')||verd.includes('ALIGNED')||verd.includes('CLEAN')||verd.includes('SAFE')||verd.includes('CONSISTENT')||verd.includes('ACCEL') ? 'g' :
+                verd.includes('DANGER')||verd.includes('BLOCK')||verd.includes('MISMATCH')||verd.includes('MISALIGN') ? 'r' :
+                verd.includes('CAUTION')||verd.includes('MIXED')||verd.includes('BORDER')||verd.includes('DECEL') ? 'y' : 'g';
+    return `<tr>
+      <td style="color:var(--accent);font-size:11px">${comp}</td>
+      <td style="color:var(--text)">${val}</td>
+      <td style="font-family:'Orbitron',monospace;font-size:13px;font-weight:700;color:#fff">${sc}</td>
+      <td><span class="tag ${cls}">${verd}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderSecondTable(prices, pipChanges, cumulative, spikes, reversals, gaps, seconds, n) {
+  const pip = 0.0001;
+  const body = document.getElementById('sec-tbody');
+  const rows = [];
+  for (let i = 0; i < n; i++) {
+    const sec = seconds[i];
+    const pc = pipChanges[i];
+    const cu = cumulative[i];
+    const isSpike = spikes[i];
+    const isRev = reversals[i];
+    const isGap = gaps[i];
+    const pcClass = pc > 0 ? 'pip-up' : pc < 0 ? 'pip-dn' : 'pip-flat';
+    const cuClass = cu > 0 ? 'pip-up' : cu < 0 ? 'pip-dn' : 'pip-flat';
+    const zoneClass = cu > 0 ? 'zone-b' : cu < 0 ? 'zone-s' : 'zone-n';
+    const zoneLabel = cu > 0 ? 'BULL' : cu < 0 ? 'BEAR' : 'FLAT';
+    rows.push(`<tr>
+      <td style="color:var(--muted)">${sec}s</td>
+      <td>${prices[i].toFixed(5)}</td>
+      <td class="${pcClass}">${pc >= 0 ? '+' : ''}${pc.toFixed(2)}</td>
+      <td class="${cuClass}">${cu >= 0 ? '+' : ''}${cu.toFixed(2)}</td>
+      <td style="color:${isGap?'var(--sell)':'var(--dim)'}">${isGap ? '⚡ GAP ' + Math.abs(pc).toFixed(1) + 'p' : '—'}</td>
+      <td class="${isSpike?'spike-flag':'pip-flat'}">${isSpike ? '🔴 FAKE' : '—'}</td>
+      <td class="${isRev?'rev-flag':'pip-flat'}">${isRev ? '⚠️ REV' : '—'}</td>
+      <td><span class="zone-tag ${zoneClass}">${zoneLabel}</span></td>
+    </tr>`);
+  }
+  body.innerHTML = rows.join('');
+}
+
+function renderAlerts(recentSpike, recentRev, totalSpikes, totalRevs, accel, consistency, l30, dir, score, spikeIdx, revIdx, n) {
+  const list = document.getElementById('alerts-list');
+  const alerts = [];
+
+  if (recentRev) alerts.push(['block', '🚫 HARD BLOCK: Reversal detected in last 20 seconds. Price already flipped. DO NOT ENTER.']);
+  if (recentSpike) alerts.push(['sell', '🔴 FAKE SPIKE in last 15 seconds. Entry risk HIGH — spike may fool the signal.']);
+  if (score >= 70 && !recentRev && !recentSpike) alerts.push(['buy', '✅ HIGH CONFIDENCE SETUP: Score ' + score + '%. Enter at 7-8 seconds remaining.']);
+  if (accel) alerts.push(['buy', '⚡ ACCELERATION DETECTED: Momentum is building into the entry zone. Good sign.']);
+  if (!accel) alerts.push(['warn', '⚠️ DECELERATION: Price is slowing down in last 30 seconds. Momentum fading.']);
+  if (consistency < 0.5) alerts.push(['warn', '⚠️ NOISY CANDLE: Less than 50% of seconds align with signal direction. Choppy price action.']);
+  if (totalSpikes > 3) alerts.push(['warn', '⚠️ ' + totalSpikes + ' fake spikes detected. This is a noisy candle — reduce confidence.']);
+  if (totalRevs > 2) alerts.push(['warn', '⚠️ ' + totalRevs + ' reversals detected. Price is indecisive.']);
+  if (score >= 50 && score < 70) alerts.push(['info', '⚡ BORDERLINE SETUP (score ' + score + '%). Only enter if you see strong visual confirmation on the chart.']);
+
+  list.innerHTML = alerts.map(([type, msg]) =>
+    `<div class="alert-box ${type}">${msg}</div>`).join('') || '<div class="alert-box info">No special events detected.</div>';
+}
+
+// ============================================================
+// CHART
+// ============================================================
+function drawChart(prices, spikes, reversals, n) {
+  const canvas = document.getElementById('price-chart');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth || 800;
+  const H = 180;
+  canvas.width = W; canvas.height = H;
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#020d12'; ctx.fillRect(0, 0, W, H);
+
+  // Grid
+  ctx.strokeStyle = '#0e2a3530'; ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = (H * i) / 4;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+
+  const hi = Math.max(...prices), lo = Math.min(...prices);
+  const pad = 16;
+  const toX = i => pad + (i / (n-1)) * (W - pad*2);
+  const toY = p => pad + ((hi - p) / (hi - lo + 0.000001)) * (H - pad*2);
+
+  // Price line
+  ctx.beginPath();
+  ctx.strokeStyle = '#00b4d8'; ctx.lineWidth = 1.5;
+  prices.forEach((p, i) => {
+    if (i === 0) ctx.moveTo(toX(i), toY(p));
+    else ctx.lineTo(toX(i), toY(p));
+  });
+  ctx.stroke();
+
+  // Shade under
+  ctx.beginPath();
+  prices.forEach((p, i) => { if (i===0) ctx.moveTo(toX(i),toY(p)); else ctx.lineTo(toX(i),toY(p)); });
+  ctx.lineTo(toX(n-1), H); ctx.lineTo(toX(0), H); ctx.closePath();
+  ctx.fillStyle = '#00b4d808'; ctx.fill();
+
+  // Spikes (red dots)
+  spikes.forEach((s, i) => {
+    if (!s) return;
+    ctx.beginPath();
+    ctx.arc(toX(i), toY(prices[i]), 4, 0, Math.PI*2);
+    ctx.fillStyle = '#ff3d6b'; ctx.fill();
+  });
+
+  // Reversals (orange triangles)
+  reversals.forEach((r, i) => {
+    if (!r) return;
+    const x = toX(i), y = toY(prices[i]);
+    ctx.beginPath();
+    ctx.moveTo(x, y-8); ctx.lineTo(x+5, y+2); ctx.lineTo(x-5, y+2);
+    ctx.closePath(); ctx.fillStyle = '#f0a500'; ctx.fill();
+  });
+
+  // Entry zone marker (last 15 seconds)
+  const entryX = toX(n - 15);
+  ctx.strokeStyle = '#00e5a040'; ctx.lineWidth = 1; ctx.setLineDash([3,3]);
+  ctx.beginPath(); ctx.moveTo(entryX, 0); ctx.lineTo(entryX, H); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#00e5a020';
+  ctx.fillRect(entryX, 0, W - entryX, H);
+  ctx.fillStyle = '#00e5a080'; ctx.font = '9px Share Tech Mono';
+  ctx.fillText('ENTRY ZONE', entryX + 4, 12);
+
+  // Legend
+  ctx.fillStyle = '#ff3d6b'; ctx.beginPath(); ctx.arc(W-130, H-10, 3, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#ff3d6b80'; ctx.font = '9px Share Tech Mono'; ctx.fillText('FAKE SPIKE', W-122, H-7);
+  ctx.fillStyle = '#f0a500'; ctx.beginPath(); ctx.moveTo(W-50,H-14); ctx.lineTo(W-44,H-4); ctx.lineTo(W-56,H-4); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#f0a50080'; ctx.fillText('REV', W-42, H-7);
+}
+
+// ============================================================
+// DEMO DATA
+// ============================================================
+function loadDemo() {
+  const prices = [];
+  let p = 1.08500;
+  const trend = Math.random() > 0.5 ? 1 : -1;
+  for (let i = 0; i < 300; i++) {
+    // Trending with noise and occasional spikes
+    p += trend * 0.000015 + (Math.random() - 0.48) * 0.00006;
+    // Inject fake spike at random point
+    if (i === 120 || i === 200) p += (Math.random() > 0.5 ? 1 : -1) * 0.00025;
+    if (i === 121 || i === 201) p -= (Math.random() > 0.5 ? 1 : -1) * 0.00020;
+    prices.push(p.toFixed(5));
+  }
+  document.getElementById('raw-input').value = prices.join('\n');
+}
+
+function clearAll() {
+  document.getElementById('raw-input').value = '';
+  document.getElementById('breakdown-wrap').style.display = 'none';
+  document.getElementById('alerts-wrap').style.display = 'none';
+  document.getElementById('sig-word').textContent = 'WAITING';
+  document.getElementById('sig-word').className = 'signal-word';
+  document.getElementById('sig-mega').className = 'signal-mega';
+  document.getElementById('conf-fill').style.width = '0%';
+  document.getElementById('conf-pct').textContent = '0%';
+  document.getElementById('sig-sub').textContent = 'Paste 300 prices and click Calculate';
+}
+
+window.addEventListener('resize', () => {
+  const prices = parseNums(document.getElementById('raw-input').value);
+  if (prices.length >= 30) {
+    const spikes = new Array(prices.length).fill(false);
+    const reversals = new Array(prices.length).fill(false);
+    drawChart(prices, spikes, reversals, prices.length);
+  }
+});
+</script>
+</body>
+</html>

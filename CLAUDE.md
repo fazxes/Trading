@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Pocket Option trading bot implementing the 7-second entry confirmation system for EUR/USD OTC binary options on 5-minute candles. The system samples 6 prices during a candle's formation, runs a 5-point confirmation checklist (momentum, deceleration ratio, position, consistency, range), and executes BUY/SELL trades at 8 seconds remaining with a 7-second expiry.
+Pocket Option trading bot implementing the Deep Signal Engine v6 for EUR/USD OTC binary options on 5-minute candles. The system collects 288 prices (1/sec from 5:00 to 0:12), runs an 8-component scoring system (0-100% confidence), and executes BUY/SELL trades at 0:08 remaining with a 7-second expiry (expires at 0:01).
 
 ## Commands
 
@@ -29,29 +29,32 @@ playwright install chromium
 
 ### Main Bot
 
-- **`pocket_live.py`** — Full live bot. Uses Playwright to launch a headed Chromium browser, logs into Pocket Option, syncs to the platform's 5-minute candle countdown, collects 6 price samples at precise moments, runs the 5-confirmation analysis, and clicks the Buy/Sell button at 8 seconds remaining. Runs in a continuous loop (one trade per candle).
+- **`pocket_live.py`** — Full live bot. Uses Playwright to launch a headed Chromium browser, logs into Pocket Option, syncs to the platform's 5-minute candle countdown (5:00 → 0:00), collects 288 prices (1/sec), runs the Deep Signal Engine v6, and clicks Buy/Sell at 0:08 remaining. Runs in a continuous loop (one trade per candle).
 
-### Signal Pipeline (7-Second Entry Confirmation)
+### Signal Pipeline (Deep Signal Engine v6)
 
-Formula logic is ported 1:1 from `EURUSD_7sec_Checklist.html`:
+Formula logic is ported 1:1 from `EURUSD_DeepSignal_v6_300sec.html`:
 
-1. **Price Sampling** — 6 prices captured at specific seconds remaining before candle close:
-   - B1 (150s), B2 (105s), B3 (60s), D1 (45s), D2 (30s), D3 (12s — trigger)
+1. **Price Collection** — 288 prices captured at 1/sec from 5:00 to 0:12 remaining
 
-2. **Primary Signal** (`compute_signal`) — Skip filters (micro range, flat candle, direction flip), decel trap reversal detection, strong momentum check, fallback to D3 vs average
+2. **Detection** — Fake spike detection (>2.5x rolling std that reverses), reversal detection (5+ sec trend then 3+ sec flip), gap detection (>1.5 pip jumps)
 
-3. **5 Confirmations** (`check_confirmations`):
-   - Momentum Continuation — D1→D2→D3 direction
-   - Deceleration Ratio — |D3-D2| / |D2-D1|, thresholds at 0.8 (good) and 0.4 (bad)
-   - Position Danger Zone — D3 position within candle range, extremes at 8%/92%
-   - Trend Consistency — sign(B2-B1) + sign(B3-B2) + sign(D1-B3) + sign(D2-D1) + sign(D3-D2)
-   - Range Quality — hi-lo in pips, thresholds at 0.0008/0.0003/0.0001
+3. **8-Component Scoring** (`run_deep_signal`):
+   - ① Net Direction (spike-filtered) — max 20 points
+   - ② Last 30s Momentum — max 20 points
+   - ③ Consistency (% seconds aligned) — max 15 points
+   - ④ Acceleration — max 10 points
+   - ⑤ Range Size — max 10 points
+   - ⑥ Fake Spike Penalty — max -15 points
+   - ⑦ Reversal Penalty — max -15 points
+   - ⑧ Last 10s Alignment — max 10 points
 
-4. **Verdict** — All green = ENTER, any red = NO ENTRY, any yellow = CAUTION (skip by default)
+4. **Verdict** — Score ≥50% = ENTER, 35-49% = BORDERLINE (skip by default), <35% = SKIP, recent reversal = BLOCK
 
-### HTML Checklist
+### HTML Reference
 
-- **`EURUSD_7sec_Checklist.html`** — Browser-based manual confirmation tool. Same formula as the bot. Enter 6 prices, click Analyze, get signal + 5 confirmations + final verdict. Includes flip-pattern warnings and payout math.
+- **`EURUSD_DeepSignal_v6_300sec.html`** — Browser-based signal engine. Paste 300 prices, get full scoring breakdown with chart, spike/reversal markers, and second-by-second analysis.
+- **`EURUSD_7sec_Checklist.html`** — Legacy 6-point checklist (no longer used by the bot).
 
 ### Browser Automation (pocket_live.py)
 
@@ -63,8 +66,7 @@ Uses `playwright.sync_api` to:
 
 ### Key Dependencies
 
-- `yfinance` — Real-time EUR/USD price data
-- `playwright` — Browser automation for live trading
+- `playwright` — Browser automation for live trading (price feed via WebSocket, no yfinance needed)
 
 ## Configuration
 
@@ -76,5 +78,6 @@ Settings are at the top of `pocket_live.py`:
 - `TRADE_AMOUNT` — Dollars per trade (default: 1)
 - `TRADE_EXPIRY` — 7 seconds (do not change)
 - `TRADE_AT_REMAINING` — Place trade at 8 seconds remaining (do not change)
-- `TRADE_ON_CAUTION` — False = skip yellow warnings, True = trade anyway
-- `SAMPLES` — Price collection schedule (seconds remaining on candle countdown)
+- `TRADE_ON_CAUTION` — False = skip borderline scores (35-49%), True = trade anyway
+- `COLLECT_UNTIL` — Stop collecting at 12 seconds remaining (trigger point)
+- `MIN_PRICES` — Minimum prices needed for analysis (default: 120)
