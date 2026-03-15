@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EUR/USD OTC · WEEKEND SIGNAL ENGINE</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;600;700&display=swap');
+  :root {
+    --bg:#06040a; --panel:#0d0815; --border:#2a1040; --border2:#160828;
+    --buy:#00e5a0; --sell:#ff3d6b; --skip:#f0a500; --block:#ff2222;
+    --accent:#b060ff; --accent2:#7c3aed; --muted:#5a3a7a; --text:#c8b8e8; --dim:#2a1548;
+    --warn:#ff9500; --trap:#ff2d55;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--text);font-family:'Rajdhani',sans-serif;min-height:100vh;}
+  body::before{content:'';position:fixed;inset:0;
+    background:
+      radial-gradient(ellipse 50% 30% at 80% 5%, #2a004a18 0%, transparent 60%),
+      radial-gradient(ellipse 40% 40% at 10% 90%, #1a003a12 0%, transparent 60%),
+      repeating-linear-gradient(0deg,transparent,transparent 39px,#2a104008 40px),
+      repeating-linear-gradient(90deg,transparent,transparent 39px,#2a104008 40px);
+    pointer-events:none;z-index:0;}
+  .wrap{position:relative;z-index:1;max-width:1400px;margin:0 auto;padding:20px 16px 60px;}
+
+  /* HEADER */
+  .header{text-align:center;padding:26px 0 20px;border-bottom:1px solid var(--border);margin-bottom:22px;}
+  .badge{display:inline-block;font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:4px;
+    color:var(--accent);background:#b060ff12;border:1px solid #b060ff28;padding:4px 16px;margin-bottom:10px;}
+  .weekend-tag{display:inline-block;font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:3px;
+    color:var(--warn);background:#ff950012;border:1px solid #ff950030;padding:3px 12px;margin-left:10px;vertical-align:middle;}
+  h1{font-family:'Orbitron',monospace;font-size:clamp(16px,3vw,30px);font-weight:900;color:#fff;
+    letter-spacing:2px;text-shadow:0 0 30px #b060ff50;}
+  h1 span{color:var(--accent);}
+  .sub{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--muted);margin-top:7px;letter-spacing:2px;}
+
+  /* WARNING BANNER */
+  .weekend-banner{
+    background:#150820;border:1px solid #ff950030;border-left:3px solid var(--warn);
+    padding:12px 18px;margin-bottom:20px;font-family:'Share Tech Mono',monospace;font-size:11px;
+    color:var(--warn);line-height:1.8;
+  }
+  .weekend-banner strong{color:#ffb340;}
+
+  /* LAYOUT */
+  .main-grid{display:grid;grid-template-columns:360px 1fr;gap:20px;}
+  @media(max-width:900px){.main-grid{grid-template-columns:1fr;}}
+
+  /* PANELS */
+  .panel{background:var(--panel);border:1px solid var(--border);padding:18px;margin-bottom:16px;}
+  .ptitle{font-family:'Orbitron',monospace;font-size:10px;letter-spacing:3px;color:var(--accent);
+    margin-bottom:13px;display:flex;align-items:center;gap:10px;}
+  .ptitle::after{content:'';flex:1;height:1px;background:var(--border);}
+
+  /* SESSION SELECTOR */
+  .session-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;}
+  .sess-btn{
+    font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:1px;
+    padding:10px 6px;background:#0a0614;border:1px solid var(--border);
+    color:var(--muted);cursor:pointer;transition:all 0.2s;text-align:center;
+  }
+  .sess-btn:hover{border-color:var(--accent);color:var(--accent);}
+  .sess-btn.active{background:#2a104020;border-color:var(--accent);color:var(--accent);box-shadow:0 0 10px #b060ff20;}
+  .sess-btn .day{font-family:'Orbitron',monospace;font-size:12px;font-weight:700;display:block;margin-bottom:3px;}
+  .sess-btn .time{font-size:9px;color:var(--muted);}
+  .sess-btn.active .time{color:#b060ff80;}
+
+  /* INPUT */
+  textarea.bulk{width:100%;background:#08040f;border:1px solid var(--border);
+    color:#ddc8ff;font-family:'Share Tech Mono',monospace;font-size:12px;
+    padding:12px;outline:none;resize:vertical;min-height:240px;line-height:1.85;transition:border-color 0.2s;}
+  textarea.bulk:focus{border-color:var(--accent);}
+  .hint{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);margin-top:7px;line-height:1.8;}
+  .btn-main{font-family:'Orbitron',monospace;font-size:12px;letter-spacing:2px;padding:13px;
+    background:linear-gradient(135deg,#7c3aed,#b060ff);border:none;color:#fff;
+    font-weight:700;cursor:pointer;width:100%;margin-top:10px;transition:all 0.2s;}
+  .btn-main:hover{filter:brightness(1.15);box-shadow:0 0 20px #b060ff40;}
+  .btn-sec{font-family:'Share Tech Mono',monospace;font-size:11px;padding:8px 14px;
+    background:transparent;border:1px solid var(--border);color:var(--muted);
+    cursor:pointer;transition:all 0.2s;margin-top:7px;width:100%;}
+  .btn-sec:hover{border-color:var(--accent);color:var(--accent);}
+
+  /* BIG SIGNAL */
+  .signal-mega{
+    border:2px solid var(--border);background:#08040f;
+    padding:28px 24px;text-align:center;margin-bottom:16px;
+    position:relative;overflow:hidden;transition:border-color 0.4s,box-shadow 0.4s;
+  }
+  .signal-mega.BUY{border-color:var(--buy);box-shadow:0 0 40px #00e5a028;}
+  .signal-mega.SELL{border-color:var(--sell);box-shadow:0 0 40px #ff3d6b28;}
+  .signal-mega.SKIP{border-color:var(--skip);}
+  .signal-mega.BLOCK{border-color:var(--block);box-shadow:0 0 40px #ff222228;}
+  .signal-mega.TRAP{border-color:var(--trap);box-shadow:0 0 40px #ff2d5540;animation:trapPulse 1s infinite alternate;}
+  @keyframes trapPulse{from{box-shadow:0 0 20px #ff2d5530;}to{box-shadow:0 0 60px #ff2d5560;}}
+  .signal-word{font-family:'Orbitron',monospace;font-size:clamp(22px,4.5vw,46px);font-weight:900;
+    letter-spacing:4px;line-height:1;}
+  .signal-word.BUY{color:var(--buy);text-shadow:0 0 30px #00e5a060;}
+  .signal-word.SELL{color:var(--sell);text-shadow:0 0 30px #ff3d6b60;}
+  .signal-word.SKIP{color:var(--skip);}
+  .signal-word.BLOCK{color:var(--block);text-shadow:0 0 30px #ff222260;}
+  .signal-word.TRAP{color:var(--trap);text-shadow:0 0 30px #ff2d5560;}
+  .signal-sub{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--muted);margin-top:8px;letter-spacing:2px;}
+  .conf-bar-wrap{margin:14px 0 4px;}
+  .conf-label{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);
+    letter-spacing:2px;margin-bottom:6px;display:flex;justify-content:space-between;}
+  .conf-bar-bg{height:8px;background:var(--dim);overflow:hidden;}
+  .conf-bar-fill{height:100%;width:0%;transition:width 0.6s ease;}
+  .conf-bar-fill.BUY{background:linear-gradient(90deg,#00b4d8,#00e5a0);}
+  .conf-bar-fill.SELL{background:linear-gradient(90deg,#ff3d6b,#ff7090);}
+  .conf-bar-fill.SKIP{background:var(--skip);}
+  .conf-bar-fill.BLOCK,.conf-bar-fill.TRAP{background:var(--block);}
+
+  /* MANIPULATION SCORE */
+  .manip-box{
+    border:1px solid #ff2d5540;background:#150010;padding:14px 16px;margin-bottom:16px;
+  }
+  .manip-title{font-family:'Orbitron',monospace;font-size:10px;letter-spacing:3px;color:var(--trap);margin-bottom:10px;}
+  .manip-meter{display:flex;align-items:center;gap:12px;margin-bottom:8px;}
+  .manip-bar-bg{flex:1;height:10px;background:var(--dim);overflow:hidden;}
+  .manip-bar-fill{height:100%;transition:width 0.6s;background:linear-gradient(90deg,#f0a500,#ff2d55);}
+  .manip-score-num{font-family:'Orbitron',monospace;font-size:18px;font-weight:700;color:var(--trap);min-width:40px;text-align:right;}
+  .manip-label{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);}
+  .manip-items{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;}
+  .manip-item{background:#0a0010;border:1px solid var(--border2);padding:7px 10px;font-family:'Share Tech Mono',monospace;font-size:10px;}
+  .manip-item.detected{border-color:#ff2d5540;color:var(--trap);}
+  .manip-item.clear{color:var(--muted);}
+
+  /* SCORE CARDS */
+  .score-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:16px;}
+  .score-card{background:#08040f;border:1px solid var(--border);padding:12px 14px;}
+  .sc-label{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;margin-bottom:4px;}
+  .sc-val{font-family:'Orbitron',monospace;font-size:19px;font-weight:700;color:#fff;}
+  .sc-val.green{color:var(--buy);}
+  .sc-val.red{color:var(--sell);}
+  .sc-val.yellow{color:var(--skip);}
+  .sc-val.purple{color:var(--accent);}
+  .sc-note{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);margin-top:3px;}
+
+  /* CHART */
+  canvas{width:100%!important;background:#08040f;border:1px solid var(--border);display:block;}
+
+  /* BREAKDOWN TABLE */
+  .breakdown{width:100%;border-collapse:collapse;font-family:'Share Tech Mono',monospace;font-size:11px;margin-bottom:16px;}
+  .breakdown th{background:#0d0815;color:var(--muted);font-size:9px;letter-spacing:2px;
+    padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);}
+  .breakdown td{padding:9px 12px;border-bottom:1px solid var(--border2);vertical-align:top;}
+  .tag{display:inline-block;font-size:10px;padding:2px 8px;border:1px solid;}
+  .tag.g{color:var(--buy);border-color:#00e5a040;background:#00e5a010;}
+  .tag.r{color:var(--sell);border-color:#ff3d6b40;background:#ff3d6b10;}
+  .tag.y{color:var(--skip);border-color:#f0a50040;background:#f0a50010;}
+  .tag.p{color:var(--block);border-color:#ff222240;background:#ff222210;}
+  .tag.t{color:var(--trap);border-color:#ff2d5540;background:#ff2d5510;}
+
+  /* SECOND TABLE */
+  .sec-table-wrap{max-height:360px;overflow-y:auto;border:1px solid var(--border);}
+  table.sec{width:100%;border-collapse:collapse;font-family:'Share Tech Mono',monospace;font-size:11px;}
+  table.sec thead th{position:sticky;top:0;background:#0d0815;color:var(--muted);
+    font-size:9px;letter-spacing:2px;padding:8px 10px;text-align:center;border-bottom:1px solid var(--border);}
+  table.sec tbody td{padding:6px 10px;text-align:center;border-bottom:1px solid var(--border2);}
+  table.sec tbody tr:hover td{background:#0d081590;}
+  .pip-up{color:var(--buy);}
+  .pip-dn{color:var(--sell);}
+  .pip-flat{color:var(--muted);}
+  .row-trap{background:#ff2d5508!important;}
+  .row-spike{background:#ff3d6b08!important;}
+
+  /* ALERTS */
+  .alert-box{border-left:3px solid;padding:10px 14px;margin-bottom:8px;
+    font-family:'Share Tech Mono',monospace;font-size:11px;line-height:1.7;background:#0a0614;}
+  .alert-box.buy{border-color:var(--buy);color:var(--buy);}
+  .alert-box.sell{border-color:var(--sell);color:var(--sell);}
+  .alert-box.warn{border-color:var(--warn);color:var(--warn);}
+  .alert-box.block{border-color:var(--block);color:var(--block);}
+  .alert-box.trap{border-color:var(--trap);color:var(--trap);}
+  .alert-box.info{border-color:var(--accent);color:var(--accent);}
+
+  ::-webkit-scrollbar{width:5px;height:5px;}
+  ::-webkit-scrollbar-track{background:var(--bg);}
+  ::-webkit-scrollbar-thumb{background:var(--border);}
+  ::-webkit-scrollbar-thumb:hover{background:var(--accent);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div>
+      <div class="badge">⚡ EUR/USD OTC · WEEKEND ENGINE</div>
+      <span class="weekend-tag">⚠ SYNTHETIC MARKET</span>
+    </div>
+    <h1>WEEKEND SIGNAL ENGINE <span>v1</span></h1>
+    <div class="sub">FRI LATE · SAT · SUN · 288 PRICES (SEC 300→12) · ENTER AT SEC 7 · MANIPULATION-AWARE</div>
+  </div>
+
+  <!-- WEEKEND WARNING BANNER -->
+  <div class="weekend-banner">
+    ⚠️ <strong>WEEKEND OTC IS A SYNTHETIC MARKET.</strong> Prices are generated by broker algorithms — NOT real supply/demand.<br>
+    Key differences vs weekdays: <strong>Lower range per candle · More fake spikes · Trap moves before real direction · Choppy reversals · No news catalysts</strong><br>
+    This engine applies <strong>stricter thresholds</strong> and a dedicated <strong>Manipulation Detector</strong> before allowing any trade signal.
+  </div>
+
+  <div class="main-grid">
+    <!-- LEFT -->
+    <div>
+      <!-- SESSION -->
+      <div class="panel">
+        <div class="ptitle">📅 SELECT SESSION</div>
+        <div class="session-grid">
+          <button class="sess-btn" id="sess-fri" onclick="setSession('fri',this)">
+            <span class="day">FRI</span>Late Night<br><span class="time">20:00 – 23:59</span>
+          </button>
+          <button class="sess-btn active" id="sess-sat" onclick="setSession('sat',this)">
+            <span class="day">SAT</span>All Day<br><span class="time">00:00 – 23:59</span>
+          </button>
+          <button class="sess-btn" id="sess-sun" onclick="setSession('sun',this)">
+            <span class="day">SUN</span>All Day<br><span class="time">00:00 – 21:00</span>
+          </button>
+        </div>
+        <div id="session-note" style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);line-height:1.7;border-top:1px solid var(--border);padding-top:10px;">
+          SAT: Highest manipulation risk. Broker algorithm very active. Require score 75%+ to enter.
+        </div>
+      </div>
+
+      <!-- INPUT -->
+      <div class="panel">
+        <div class="ptitle">📋 PASTE 288 PRICES</div>
+        <textarea class="bulk" id="raw-input"
+          placeholder="Paste 288 prices — 1 per second.
+Second 300 (candle open) → second 12 (last).
+
+1.08500  ← sec 300
+1.08501
+1.08499
+...
+1.08541  ← sec 12
+
+Bot stops at sec 12.
+Signal fires at sec 7. Enter trade."></textarea>
+        <div class="hint">
+          ✅ 288 prices = sec 300 → sec 12<br>
+          ✅ Weekend mode: stricter thresholds active<br>
+          ✅ Manipulation score calculated on every candle
+        </div>
+        <button class="btn-main" onclick="runEngine()">⚡ CALCULATE WEEKEND SIGNAL</button>
+        <button class="btn-sec" onclick="loadDemo()">LOAD DEMO DATA</button>
+        <button class="btn-sec" onclick="clearAll()">CLEAR</button>
+      </div>
+
+      <!-- ALERTS -->
+      <div id="alerts-wrap" style="display:none">
+        <div class="panel">
+          <div class="ptitle">⚠️ DETECTED EVENTS</div>
+          <div id="alerts-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT -->
+    <div>
+
+      <!-- BIG SIGNAL -->
+      <div class="signal-mega" id="sig-mega">
+        <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:3px;margin-bottom:10px;">WEEKEND SIGNAL</div>
+        <div class="signal-word" id="sig-word" style="color:var(--muted);">WAITING</div>
+        <div class="signal-sub" id="sig-sub">Select session · Paste 288 prices · Calculate</div>
+        <div class="conf-bar-wrap">
+          <div class="conf-label"><span>CONFIDENCE</span><span id="conf-pct">0%</span></div>
+          <div class="conf-bar-bg"><div class="conf-bar-fill" id="conf-fill"></div></div>
+        </div>
+      </div>
+
+      <!-- MANIPULATION SCORE -->
+      <div class="manip-box" id="manip-box">
+        <div class="manip-title">🎭 MANIPULATION DETECTOR</div>
+        <div class="manip-meter">
+          <span class="manip-label">MANIP LEVEL</span>
+          <div class="manip-bar-bg"><div class="manip-bar-fill" id="manip-fill" style="width:0%"></div></div>
+          <div class="manip-score-num" id="manip-num">—</div>
+        </div>
+        <div class="manip-items" id="manip-items">
+          <div class="manip-item clear">🔍 TRAP MOVE · waiting</div>
+          <div class="manip-item clear">🔍 FAKE SPIKE · waiting</div>
+          <div class="manip-item clear">🔍 CHOP ZONE · waiting</div>
+          <div class="manip-item clear">🔍 LATE REVERSAL · waiting</div>
+          <div class="manip-item clear">🔍 MICRO RANGE · waiting</div>
+          <div class="manip-item clear">🔍 ZIGZAG · waiting</div>
+        </div>
+      </div>
+
+      <!-- SCORE CARDS -->
+      <div class="score-grid" id="score-grid">
+        <div class="score-card"><div class="sc-label">CONFIDENCE SCORE</div><div class="sc-val" id="sc-total">—</div><div class="sc-note" id="sc-total-note">—</div></div>
+        <div class="score-card"><div class="sc-label">NET DIRECTION</div><div class="sc-val" id="sc-mom">—</div><div class="sc-note" id="sc-mom-note">—</div></div>
+        <div class="score-card"><div class="sc-label">TOTAL RANGE</div><div class="sc-val" id="sc-range">—</div><div class="sc-note">pip (hi–lo)</div></div>
+        <div class="score-card"><div class="sc-label">NET MOVE</div><div class="sc-val" id="sc-net">—</div><div class="sc-note">open → last</div></div>
+        <div class="score-card"><div class="sc-label">FAKE SPIKES</div><div class="sc-val" id="sc-spikes">—</div><div class="sc-note" id="sc-spike-note">—</div></div>
+        <div class="score-card"><div class="sc-label">TRAP MOVES</div><div class="sc-val" id="sc-traps">—</div><div class="sc-note" id="sc-trap-note">—</div></div>
+        <div class="score-card"><div class="sc-label">LAST 30s</div><div class="sc-val" id="sc-f30">—</div><div class="sc-note">pip momentum</div></div>
+        <div class="score-card"><div class="sc-label">CHOP RATING</div><div class="sc-val" id="sc-chop">—</div><div class="sc-note" id="sc-chop-note">—</div></div>
+      </div>
+
+      <!-- CHART -->
+      <div class="panel" style="padding:14px;">
+        <div class="ptitle">📈 PRICE CHART · WEEKEND VIEW</div>
+        <canvas id="price-chart" height="190"></canvas>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- BREAKDOWN + SEC TABLE -->
+  <div id="breakdown-wrap" style="display:none">
+    <div class="panel">
+      <div class="ptitle">🔬 FULL FORMULA BREAKDOWN</div>
+      <table class="breakdown">
+        <thead><tr><th>COMPONENT</th><th>VALUE</th><th>SCORE</th><th>VERDICT</th></tr></thead>
+        <tbody id="breakdown-body"></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <div class="ptitle">⏱ SECOND-BY-SECOND · WEEKEND ANALYSIS</div>
+      <div class="sec-table-wrap">
+        <table class="sec">
+          <thead><tr>
+            <th>SEC</th><th>PRICE</th><th>PIP CHANGE</th><th>CUMULATIVE</th>
+            <th>GAP</th><th>SPIKE</th><th>TRAP</th><th>ZIGZAG</th><th>FLAG</th>
+          </tr></thead>
+          <tbody id="sec-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ============================================================
+// SESSION CONFIG — weekend thresholds differ per session
+// ============================================================
+const SESSION_CONFIG = {
+  fri: {
+    label: 'Friday Late Night',
+    minScore: 68,        // slightly relaxed — Friday still has some real liquidity momentum
+    minNetDir: 0.32,     // 32% minimum net direction
+    minRange: 1.5,       // pip minimum range
+    manipPenalty: 1.0,   // normal penalty multiplier
+    note: 'FRI late: Market transitioning to weekend. Some real momentum still present. Score 68%+ required.'
+  },
+  sat: {
+    label: 'Saturday',
+    minScore: 75,        // strictest — full synthetic Saturday
+    minNetDir: 0.38,     // 38% minimum — need strong conviction
+    minRange: 1.2,
+    manipPenalty: 1.4,   // 40% heavier manipulation penalty
+    note: 'SAT: Highest manipulation risk. Broker algorithm very active. Require score 75%+ to enter.'
+  },
+  sun: {
+    label: 'Sunday',
+    minScore: 72,        // strict — market about to reopen, traps common near open
+    minNetDir: 0.35,
+    minRange: 1.3,
+    manipPenalty: 1.2,
+    note: 'SUN: Market reopens soon. Watch for pre-open traps and sudden direction flips. 72%+ required.'
+  }
+};
+
+let currentSession = 'sat';
+
+function setSession(s, btn) {
+  currentSession = s;
+  document.querySelectorAll('.sess-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('session-note').textContent = SESSION_CONFIG[s].note;
+}
+
+// ============================================================
+// PARSE
+// ============================================================
+function parseNums(text) {
+  return text.replace(/[,;\t\r]/g,' ').split(/\s+/)
+    .map(s => parseFloat(s)).filter(n => !isNaN(n) && n > 0);
+}
+
+// ============================================================
+// MAIN ENGINE
+// ============================================================
+function runEngine() {
+  const text = document.getElementById('raw-input').value.trim();
+  if (!text) { alert('Paste your 288 prices first.'); return; }
+  const prices = parseNums(text);
+  if (prices.length < 30) { alert('Need at least 30 prices. Got: ' + prices.length); return; }
+  if (prices.length > 288) prices.splice(288);
+  const n = prices.length;
+  const pip = 0.0001;
+  const cfg = SESSION_CONFIG[currentSession];
+
+  // Second labels: sec 300 → sec 12
+  const seconds = [];
+  for (let i = 0; i < n; i++) seconds.push(300 - i);
+
+  // ---- PIP CHANGES
+  const pipChanges = [0];
+  for (let i = 1; i < n; i++) pipChanges.push((prices[i] - prices[i-1]) / pip);
+
+  // ---- CUMULATIVE
+  const cumulative = prices.map(p => (p - prices[0]) / pip);
+
+  // ============================================================
+  // WEEKEND-SPECIFIC: TRAP MOVE DETECTION
+  // A trap move = price pushes strongly in ONE direction for 8-15 seconds
+  // (enough to look like a real signal), then SHARPLY reverses.
+  // This is the #1 weekend manipulation pattern.
+  // ============================================================
+  const traps = new Array(n).fill(false);
+  const trapDir = new Array(n).fill(0);
+  for (let i = 10; i < n - 5; i++) {
+    const pushWindow = pipChanges.slice(i - 8, i);
+    const pushSum = pushWindow.reduce((a,b)=>a+b,0);
+    // Strong push: 8 seconds moving mostly one direction, net > 1.5 pip
+    if (Math.abs(pushSum) >= 1.5) {
+      const reverseWindow = pipChanges.slice(i, i + 5);
+      const reverseSum = reverseWindow.reduce((a,b)=>a+b,0);
+      // Reversal that wipes out 60%+ of the push
+      if (Math.sign(reverseSum) !== Math.sign(pushSum) && Math.abs(reverseSum) >= Math.abs(pushSum) * 0.6) {
+        traps[i] = true;
+        trapDir[i] = Math.sign(pushSum); // direction of the FAKE push
+      }
+    }
+  }
+
+  // ---- SPIKE DETECTION (same as weekday but with lower threshold for weekend)
+  const spikes = new Array(n).fill(false);
+  for (let i = 5; i < n - 2; i++) {
+    const window = pipChanges.slice(Math.max(0, i-10), i);
+    const mean = window.reduce((a,b)=>a+b,0)/window.length;
+    const std = Math.sqrt(window.reduce((a,b)=>a+(b-mean)**2,0)/window.length) || 0.01;
+    const move = pipChanges[i];
+    // Weekend: lower threshold (2.0x instead of 2.5x) — more sensitive
+    if (Math.abs(move) > Math.max(2.0 * std, 1.2)) {
+      const rev = pipChanges[i+1] + (pipChanges[i+2] || 0);
+      if (Math.sign(rev) !== Math.sign(move) && Math.abs(rev) > Math.abs(move) * 0.35) {
+        spikes[i] = true;
+      }
+    }
+  }
+
+  // ---- REVERSAL DETECTION
+  const reversals = new Array(n).fill(false);
+  for (let i = 8; i < n - 3; i++) {
+    if (spikes[i] || traps[i]) continue;
+    const prevSum = pipChanges.slice(i-5, i).reduce((a,b)=>a+b,0);
+    const nextSum = pipChanges.slice(i, i+3).reduce((a,b)=>a+b,0);
+    if (Math.abs(prevSum) > 1.5 && Math.abs(nextSum) > 1.0 && Math.sign(prevSum) !== Math.sign(nextSum)) {
+      reversals[i] = true;
+    }
+  }
+
+  // ---- ZIGZAG DETECTION (alternating direction every 1-3 seconds — pure chop/manipulation)
+  const zigzag = new Array(n).fill(false);
+  for (let i = 4; i < n - 1; i++) {
+    let alternations = 0;
+    for (let j = i - 4; j < i; j++) {
+      if (j > 0 && Math.sign(pipChanges[j]) !== Math.sign(pipChanges[j-1]) &&
+          Math.abs(pipChanges[j]) > 0.3 && Math.abs(pipChanges[j-1]) > 0.3) {
+        alternations++;
+      }
+    }
+    if (alternations >= 3) zigzag[i] = true;
+  }
+
+  // ---- GAP DETECTION (weekend gaps are more common — threshold 1.2 pip)
+  const gaps = pipChanges.map(c => Math.abs(c) >= 1.2);
+
+  // ============================================================
+  // KEY METRICS
+  // ============================================================
+  const open = prices[0], close = prices[n-1];
+  const high = Math.max(...prices), low = Math.min(...prices);
+  const rangePips = (high - low) / pip;
+  const netPips = (close - open) / pip;
+
+  // Spike + trap filtered direction
+  let filtUp = 0, filtDn = 0;
+  for (let i = 1; i < n; i++) {
+    if (spikes[i] || traps[i]) continue;
+    if (pipChanges[i] > 0) filtUp += pipChanges[i];
+    else filtDn += Math.abs(pipChanges[i]);
+  }
+  const filtDir = filtUp > filtDn ? 'BUY' : filtDn > filtUp ? 'SELL' : 'FLAT';
+  const dirStrength = Math.abs(filtUp - filtDn) / (filtUp + filtDn + 0.001);
+
+  const last30 = prices.slice(Math.max(0, n-30));
+  const last30Net = (last30[last30.length-1] - last30[0]) / pip;
+  const first30Net = Math.abs((prices[29] - prices[0]) / pip);
+  const last30Abs = Math.abs(last30Net);
+  const accelerating = last30Abs > first30Net;
+
+  const last10Net = (prices[n-1] - prices[Math.max(0,n-10)]) / pip;
+
+  let consistentSec = 0, totalNonManip = 0;
+  for (let i = 1; i < n; i++) {
+    if (spikes[i] || traps[i] || zigzag[i]) continue;
+    totalNonManip++;
+    if ((filtDir==='BUY' && pipChanges[i]>0)||(filtDir==='SELL' && pipChanges[i]<0)) consistentSec++;
+  }
+  const consistency = totalNonManip > 0 ? consistentSec / totalNonManip : 0;
+
+  // Chop rating: % of seconds that are zigzag
+  const zigzagCount = zigzag.filter(Boolean).length;
+  const chopRating = zigzagCount / n;
+
+  // Recent checks
+  const lastTrapIdx = traps.lastIndexOf(true);
+  const recentTrap = lastTrapIdx >= n - 25 && lastTrapIdx !== -1;
+  const lastSpikeIdx = spikes.lastIndexOf(true);
+  const recentSpike = lastSpikeIdx >= n - 15 && lastSpikeIdx !== -1;
+  const lastRevIdx = reversals.lastIndexOf(true);
+  const recentReversal = lastRevIdx >= n - 20 && lastRevIdx !== -1;
+
+  const totalSpikes = spikes.filter(Boolean).length;
+  const totalTraps = traps.filter(Boolean).length;
+  const totalReversals = reversals.filter(Boolean).length;
+
+  // ============================================================
+  // MANIPULATION SCORE (0–100, higher = more manipulation)
+  // ============================================================
+  let manipScore = 0;
+  const manipItems = [];
+
+  // Trap moves
+  if (recentTrap) { manipScore += 35; manipItems.push({key:'TRAP MOVE', val:'⚠ RECENT TRAP (last 25s)', detected:true}); }
+  else if (totalTraps > 0) { manipScore += totalTraps * 8; manipItems.push({key:'TRAP MOVE', val:totalTraps + ' trap(s) detected', detected:true}); }
+  else manipItems.push({key:'TRAP MOVE', val:'none detected ✓', detected:false});
+
+  // Fake spikes
+  if (recentSpike) { manipScore += 20; manipItems.push({key:'FAKE SPIKE', val:'⚠ RECENT SPIKE', detected:true}); }
+  else if (totalSpikes > 3) { manipScore += 10; manipItems.push({key:'FAKE SPIKE', val:totalSpikes + ' spikes', detected:true}); }
+  else manipItems.push({key:'FAKE SPIKE', val:totalSpikes + ' spike(s) ✓', detected:false});
+
+  // Chop zone
+  if (chopRating > 0.35) { manipScore += 20; manipItems.push({key:'CHOP ZONE', val:(chopRating*100).toFixed(0)+'% zigzag', detected:true}); }
+  else manipItems.push({key:'CHOP ZONE', val:(chopRating*100).toFixed(0)+'% ✓', detected:false});
+
+  // Late reversal
+  if (recentReversal) { manipScore += 15; manipItems.push({key:'LATE REVERSAL', val:'⚠ FLIP DETECTED', detected:true}); }
+  else manipItems.push({key:'LATE REVERSAL', val:'none recent ✓', detected:false});
+
+  // Micro range
+  if (rangePips < cfg.minRange) { manipScore += 10; manipItems.push({key:'MICRO RANGE', val:rangePips.toFixed(2)+' pip (too small)', detected:true}); }
+  else manipItems.push({key:'MICRO RANGE', val:rangePips.toFixed(2)+' pip ✓', detected:false});
+
+  // Zigzag
+  if (zigzagCount > 20) { manipScore += 10; manipItems.push({key:'ZIGZAG', val:zigzagCount+' seconds choppy', detected:true}); }
+  else manipItems.push({key:'ZIGZAG', val:zigzagCount+' sec OK ✓', detected:false});
+
+  // Apply session multiplier
+  manipScore = Math.min(100, Math.round(manipScore * cfg.manipPenalty));
+
+  // ============================================================
+  // SCORING (0–100)
+  // ============================================================
+  let score = 0;
+  const breakdown = [];
+
+  // ① NET DIRECTION — weekend needs 38%+ (sat) / 35% (sun) / 32% (fri)
+  const netDirBlocked = dirStrength < cfg.minNetDir && rangePips >= cfg.minRange;
+  let s1 = 0, s1note = '', s1verdict = '';
+  if (rangePips < cfg.minRange) {
+    s1 = 0; s1note = 'Range ' + rangePips.toFixed(2) + ' pip — too small for weekend'; s1verdict = 'SKIP';
+  } else if (netDirBlocked) {
+    s1 = 0;
+    s1note = filtDir + ' · ' + (dirStrength*100).toFixed(0) + '% — below ' + (cfg.minNetDir*100).toFixed(0) + '% weekend minimum';
+    s1verdict = 'HARD SKIP';
+  } else {
+    s1 = Math.round(Math.min(dirStrength * 28, 20));
+    s1note = filtDir + ' · ' + (dirStrength*100).toFixed(0) + '% strength (trap/spike filtered)';
+    s1verdict = s1 >= 15 ? 'STRONG' : s1 >= 9 ? 'MODERATE' : 'WEAK';
+  }
+  score += s1;
+  breakdown.push(['① NET DIRECTION (trap+spike filtered)', s1note, s1+'/20', s1verdict]);
+
+  // ② TRAP PENALTY — weekend exclusive (max -25)
+  let s2 = 0, s2note = '', s2verdict = '';
+  if (recentTrap) {
+    s2 = -25; s2note = 'Trap move in last 25s — FAKE direction push detected';
+    s2verdict = 'HARD BLOCK';
+  } else if (totalTraps > 1) {
+    s2 = -10 * Math.min(totalTraps, 2);
+    s2note = totalTraps + ' trap move(s) this candle';
+    s2verdict = 'DANGER';
+  } else if (totalTraps === 1) {
+    s2 = -5; s2note = '1 trap detected (early candle)'; s2verdict = 'CAUTION';
+  } else {
+    s2 = 0; s2note = 'No trap moves ✓'; s2verdict = 'CLEAN';
+  }
+  score += s2;
+  breakdown.push(['② TRAP MOVE PENALTY (weekend exclusive)', s2note, s2+'/0', s2verdict]);
+
+  // ③ LAST 30s MOMENTUM (max 18)
+  let s3 = 0, s3note = '', s3verdict = '';
+  const l30aligned = (filtDir==='BUY'&&last30Net>0)||(filtDir==='SELL'&&last30Net<0);
+  if (l30aligned) {
+    s3 = Math.min(Math.round(Math.abs(last30Net)*3.5), 18);
+    s3note = (last30Net>0?'+':'') + last30Net.toFixed(2) + ' pips last 30s';
+    s3verdict = s3>=12 ? 'STRONG PUSH' : 'ALIGNED';
+  } else {
+    s3 = 0; s3note = 'AGAINST signal · ' + last30Net.toFixed(2) + ' pips'; s3verdict = 'MISALIGNED';
+  }
+  score += s3;
+  breakdown.push(['③ LAST 30s MOMENTUM', s3note, s3+'/18', s3verdict]);
+
+  // ④ CHOP / ZIGZAG PENALTY (max -15)
+  let s4 = 0, s4note = '', s4verdict = '';
+  if (chopRating > 0.4) {
+    s4 = -15; s4note = (chopRating*100).toFixed(0) + '% of candle is zigzag chop';
+    s4verdict = 'EXTREME CHOP';
+  } else if (chopRating > 0.25) {
+    s4 = -8; s4note = (chopRating*100).toFixed(0) + '% zigzag detected'; s4verdict = 'CHOPPY';
+  } else {
+    s4 = 0; s4note = (chopRating*100).toFixed(0) + '% — acceptable ✓'; s4verdict = 'CLEAN';
+  }
+  score += s4;
+  breakdown.push(['④ CHOP / ZIGZAG PENALTY', s4note, s4+'/0', s4verdict]);
+
+  // ⑤ CONSISTENCY (max 14)
+  let s5 = Math.round(consistency * 14);
+  let s5note = (consistency*100).toFixed(0) + '% non-manipulated seconds in signal direction';
+  let s5verdict = consistency>=0.65?'CONSISTENT':consistency>=0.5?'MIXED':'NOISY';
+  score += s5;
+  breakdown.push(['⑤ CONSISTENCY (excl. spikes/traps)', s5note, s5+'/14', s5verdict]);
+
+  // ⑥ ACCELERATION (max 8 — lower than weekday, less reliable on weekends)
+  let s6 = 0, s6note = '', s6verdict = '';
+  if (accelerating) {
+    s6 = 8; s6note = 'Last 30s (' + last30Abs.toFixed(1) + 'p) > First 30s (' + first30Net.toFixed(1) + 'p)';
+    s6verdict = 'ACCELERATING';
+  } else {
+    s6 = 2; s6note = 'Slowing · last 30s (' + last30Abs.toFixed(1) + 'p)'; s6verdict = 'DECELERATING';
+  }
+  score += s6;
+  breakdown.push(['⑥ ACCELERATION', s6note, s6+'/8', s6verdict]);
+
+  // ⑦ RANGE SIZE (max 8)
+  let s7 = 0, s7note = '', s7verdict = '';
+  if (rangePips >= 4) { s7=8; s7verdict='EXCELLENT'; }
+  else if (rangePips >= 2.5) { s7=6; s7verdict='GOOD'; }
+  else if (rangePips >= cfg.minRange) { s7=3; s7verdict='BORDERLINE'; }
+  else { s7=0; s7verdict='TOO SMALL'; }
+  s7note = rangePips.toFixed(2) + ' pip range';
+  score += s7;
+  breakdown.push(['⑦ RANGE SIZE', s7note, s7+'/8', s7verdict]);
+
+  // ⑧ LATE REVERSAL PENALTY (max -15)
+  let s8 = 0, s8note = '', s8verdict = '';
+  if (recentReversal) {
+    s8 = -15; s8note = 'Reversal in last 20s — flip already started'; s8verdict = 'HARD BLOCK';
+  } else if (totalReversals > 2) {
+    s8 = -5; s8note = totalReversals + ' reversals — indecisive candle'; s8verdict = 'CAUTION';
+  } else {
+    s8 = 0; s8note = totalReversals + ' reversal(s) — none recent ✓'; s8verdict = 'SAFE';
+  }
+  score += s8;
+  breakdown.push(['⑧ LATE REVERSAL PENALTY', s8note, s8+'/0', s8verdict]);
+
+  // ⑨ LAST 10s ALIGNMENT (max 8)
+  let s9 = 0, s9note = '', s9verdict = '';
+  const l10aligned = (filtDir==='BUY'&&last10Net>0)||(filtDir==='SELL'&&last10Net<0);
+  if (l10aligned) {
+    s9 = Math.min(Math.round(Math.abs(last10Net)*4), 8);
+    s9note = 'Last 10s: ' + (last10Net>0?'+':'') + last10Net.toFixed(2) + ' pips';
+    s9verdict = 'ALIGNED ✓';
+  } else {
+    s9 = 0; s9note = 'Last 10s against signal'; s9verdict = 'MISALIGNED';
+  }
+  score += s9;
+  breakdown.push(['⑨ LAST 10s ALIGNMENT', s9note, s9+'/8', s9verdict]);
+
+  // Clamp
+  score = Math.max(0, Math.min(100, score));
+
+  // Manipulation penalty on final score
+  const manipPenaltyOnScore = Math.round(manipScore * 0.3);
+  score = Math.max(0, score - manipPenaltyOnScore);
+
+  // ============================================================
+  // FINAL VERDICT
+  // ============================================================
+  let finalSig = filtDir;
+  let verdict = '';
+
+  if (recentTrap && rangePips >= cfg.minRange) {
+    verdict = 'TRAP DETECTED — HARD BLOCK'; finalSig = 'TRAP';
+  } else if (recentReversal && rangePips >= cfg.minRange) {
+    verdict = 'HARD BLOCK · REVERSAL'; finalSig = 'BLOCK';
+  } else if (netDirBlocked) {
+    verdict = 'SKIP · NET DIR ' + (dirStrength*100).toFixed(0) + '% (NEED ' + (cfg.minNetDir*100).toFixed(0) + '%+)';
+    finalSig = 'SKIP';
+  } else if (score >= cfg.minScore) {
+    verdict = filtDir === 'BUY' ? 'ENTER BUY' : filtDir === 'SELL' ? 'ENTER SELL' : 'SKIP';
+  } else if (score >= cfg.minScore - 10) {
+    verdict = 'BORDERLINE — SKIP ON WEEKEND'; finalSig = 'SKIP';
+  } else {
+    verdict = 'SKIP'; finalSig = 'SKIP';
+  }
+
+  if (rangePips < cfg.minRange) { verdict = 'SKIP · RANGE TOO SMALL'; finalSig = 'SKIP'; }
+
+  // ============================================================
+  // RENDER
+  // ============================================================
+  renderSignal(finalSig, verdict, score);
+  renderManip(manipScore, manipItems);
+  renderScoreCards(score, filtDir, dirStrength, rangePips, netPips, totalSpikes, totalTraps, last30Net, chopRating);
+  renderBreakdown(breakdown);
+  renderSecTable(prices, pipChanges, cumulative, spikes, traps, reversals, zigzag, gaps, seconds, n);
+  renderAlerts(recentTrap, recentReversal, recentSpike, netDirBlocked, dirStrength, cfg, totalTraps, totalSpikes, score, manipScore, accelerating, chopRating, filtDir);
+  drawChart(prices, spikes, traps, reversals, zigzag, n);
+
+  document.getElementById('breakdown-wrap').style.display = 'block';
+  document.getElementById('alerts-wrap').style.display = 'block';
+  document.getElementById('breakdown-wrap').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+// ============================================================
+// RENDER FUNCTIONS
+// ============================================================
+function renderSignal(sig, verdict, score) {
+  const mega = document.getElementById('sig-mega');
+  mega.className = 'signal-mega ' + sig;
+  const word = document.getElementById('sig-word');
+  word.className = 'signal-word ' + sig;
+  word.textContent = verdict;
+  document.getElementById('sig-sub').textContent =
+    sig==='BUY' ? '⚡ ENTER AT SECOND 7 — BUY' :
+    sig==='SELL' ? '⚡ ENTER AT SECOND 7 — SELL' :
+    sig==='TRAP' ? '🎭 FAKE PUSH DETECTED — DO NOT ENTER' :
+    sig==='BLOCK' ? '🚫 REVERSAL — DO NOT ENTER' : '⏭ SKIP THIS CANDLE';
+  document.getElementById('conf-pct').textContent = score + '%';
+  const fill = document.getElementById('conf-fill');
+  fill.style.width = score + '%';
+  fill.className = 'conf-bar-fill ' + sig;
+}
+
+function renderManip(manipScore, items) {
+  document.getElementById('manip-fill').style.width = manipScore + '%';
+  document.getElementById('manip-num').textContent = manipScore + '%';
+  document.getElementById('manip-items').innerHTML = items.map(it =>
+    `<div class="manip-item ${it.detected?'detected':'clear'}">
+      ${it.detected?'🔴':'✅'} ${it.key} · ${it.val}
+    </div>`).join('');
+}
+
+function renderScoreCards(score, dir, strength, range, net, spikes, traps, l30, chop) {
+  const c = s => s>='green'?'green':s;
+  setCard('sc-total', score+'%', score>=75?'green':score>=55?'yellow':'red', score>=75?'✅ TAKE TRADE':score>=60?'⚡ BORDERLINE':'⏭ SKIP');
+  setCard('sc-mom', (strength*100).toFixed(0)+'%', strength>0.55?'green':strength>0.38?'yellow':'red', dir+' bias');
+  setCard('sc-range', range.toFixed(1), range>=3?'green':range>=2?'yellow':'red', '');
+  setCard('sc-net', (net>=0?'+':'')+net.toFixed(2), net>0?'green':net<0?'red':'', 'pip open→last');
+  setCard('sc-spikes', spikes, spikes===0?'green':spikes<=2?'yellow':'red', spikes===0?'clean ✓':'detected');
+  setCard('sc-traps', traps, traps===0?'green':traps===1?'yellow':'red', traps===0?'no traps ✓':'⚠ trap risk');
+  setCard('sc-f30', (l30>=0?'+':'')+l30.toFixed(2), (dir==='BUY'&&l30>0)||(dir==='SELL'&&l30<0)?'green':'red', 'pip');
+  setCard('sc-chop', (chop*100).toFixed(0)+'%', chop<0.2?'green':chop<0.35?'yellow':'red', chop<0.2?'clean ✓':'choppy');
+}
+
+function setCard(id, val, cls, note) {
+  const el = document.getElementById(id);
+  if (el) { el.textContent = val; el.className = 'sc-val ' + cls; }
+  const ni = document.getElementById(id+'-note');
+  if (ni) ni.textContent = note;
+}
+
+function renderBreakdown(rows) {
+  document.getElementById('breakdown-body').innerHTML = rows.map(([comp,val,sc,verd]) => {
+    const cls = verd.includes('STRONG')||verd.includes('ALIGNED')||verd.includes('CLEAN')||verd.includes('SAFE')||verd.includes('CONSIST')||verd.includes('ACCEL')?'g':
+                verd.includes('HARD')||verd.includes('DANGER')||verd.includes('EXTREME')||verd.includes('MISMATCH')?'p':
+                verd.includes('CAUTION')||verd.includes('MIXED')||verd.includes('BORDER')||verd.includes('DECEL')||verd.includes('CHOPPY')?'y':
+                verd.includes('SKIP')||verd.includes('TRAP')?'t':'g';
+    return `<tr>
+      <td style="color:var(--accent);font-size:11px">${comp}</td>
+      <td style="color:var(--text)">${val}</td>
+      <td style="font-family:'Orbitron',monospace;font-size:13px;font-weight:700;color:#fff">${sc}</td>
+      <td><span class="tag ${cls}">${verd}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderSecTable(prices, pipChanges, cumulative, spikes, traps, reversals, zigzag, gaps, seconds, n) {
+  const body = document.getElementById('sec-tbody');
+  const rows = [];
+  for (let i = 0; i < n; i++) {
+    const pc = pipChanges[i];
+    const cu = cumulative[i];
+    const pcCls = pc>0?'pip-up':pc<0?'pip-dn':'pip-flat';
+    const cuCls = cu>0?'pip-up':cu<0?'pip-dn':'pip-flat';
+    const rowCls = traps[i]?'row-trap':spikes[i]?'row-spike':'';
+    const flag = traps[i]?'<span style="color:var(--trap)">🎭TRAP</span>':
+                 spikes[i]?'<span style="color:var(--sell)">🔴SPIKE</span>':
+                 reversals[i]?'<span style="color:var(--skip)">⚠REV</span>':'—';
+    rows.push(`<tr class="${rowCls}">
+      <td style="color:var(--muted)">${seconds[i]}s</td>
+      <td>${prices[i].toFixed(5)}</td>
+      <td class="${pcCls}">${pc>=0?'+':''}${pc.toFixed(2)}</td>
+      <td class="${cuCls}">${cu>=0?'+':''}${cu.toFixed(2)}</td>
+      <td style="color:${gaps[i]?'var(--sell)':'var(--dim)'}">${gaps[i]?'⚡'+Math.abs(pc).toFixed(1)+'p':'—'}</td>
+      <td class="${spikes[i]?'pip-dn pip-flat':''}">${spikes[i]?'🔴FAKE':'—'}</td>
+      <td style="color:${traps[i]?'var(--trap)':'var(--dim)'}">${traps[i]?'🎭YES':'—'}</td>
+      <td style="color:${zigzag[i]?'var(--warn)':'var(--dim)'}">${zigzag[i]?'⚡CHOP':'—'}</td>
+      <td>${flag}</td>
+    </tr>`);
+  }
+  body.innerHTML = rows.join('');
+}
+
+function renderAlerts(recentTrap, recentRev, recentSpike, netDirBlocked, dirStr, cfg, totalTraps, totalSpikes, score, manip, accel, chop, dir) {
+  const list = document.getElementById('alerts-list');
+  const alerts = [];
+  if (recentTrap) alerts.push(['trap','🎭 WEEKEND TRAP DETECTED: Price pushed strongly in one direction then reversed — this is a FAKE move. The real direction is likely OPPOSITE. DO NOT ENTER.']);
+  if (recentRev) alerts.push(['block','🚫 HARD BLOCK: Reversal in last 20 seconds. Candle already flipped. Do not enter.']);
+  if (recentSpike) alerts.push(['sell','🔴 FAKE SPIKE in last 15 seconds. Weekend spikes are more frequent and aggressive.']);
+  if (netDirBlocked) alerts.push(['warn','⚠️ NET DIRECTION only ' + (dirStr*100).toFixed(0) + '%. Weekend requires ' + (cfg.minNetDir*100).toFixed(0) + '%+ minimum. Too noisy to trade.']);
+  if (manip >= 60) alerts.push(['trap','🎭 MANIPULATION SCORE: ' + manip + '% — This candle is highly manipulated. Skip regardless of signal direction.']);
+  else if (manip >= 35) alerts.push(['warn','⚠️ MANIPULATION SCORE: ' + manip + '% — Elevated. Be extra cautious. Only trade if confidence score is strong.']);
+  if (chop > 0.35) alerts.push(['warn','⚠️ EXTREME CHOP: ' + (chop*100).toFixed(0) + '% zigzag. Broker algorithm is bouncing price with no real direction. Skip.']);
+  if (score >= cfg.minScore && !recentTrap && !recentRev) alerts.push(['buy','✅ CONFIRMED SETUP: Score ' + score + '% meets weekend threshold (' + cfg.minScore + '%+). Enter at second 7.']);
+  if (!accel) alerts.push(['warn','⚠️ DECELERATION: Momentum fading in last 30 seconds. Weekend candles often stall before reversing.']);
+  if (totalTraps > 0 && !recentTrap) alerts.push(['info','ℹ️ ' + totalTraps + ' trap move(s) earlier in candle. Monitor closely — weekend traps sometimes repeat.']);
+  list.innerHTML = alerts.map(([t,m]) => `<div class="alert-box ${t}">${m}</div>`).join('')
+    || '<div class="alert-box info">No critical events detected.</div>';
+}
+
+// ============================================================
+// CHART
+// ============================================================
+function drawChart(prices, spikes, traps, reversals, zigzag, n) {
+  const canvas = document.getElementById('price-chart');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth || 800;
+  const H = 190;
+  canvas.width = W; canvas.height = H;
+  ctx.fillStyle = '#08040f'; ctx.fillRect(0,0,W,H);
+
+  // Grid
+  ctx.strokeStyle = '#2a104020'; ctx.lineWidth=1;
+  for (let i=0;i<=4;i++){const y=(H*i)/4;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+
+  const hi=Math.max(...prices),lo=Math.min(...prices);
+  const pad=16;
+  const toX=i=>pad+(i/(n-1))*(W-pad*2);
+  const toY=p=>pad+((hi-p)/(hi-lo+0.000001))*(H-pad*2);
+
+  // Zigzag zones (yellow background)
+  for (let i=0;i<n;i++){
+    if (zigzag[i]) {
+      ctx.fillStyle='#f0a50008';
+      ctx.fillRect(toX(i),0,toX(Math.min(i+1,n-1))-toX(i),H);
+    }
+  }
+
+  // Price line
+  ctx.beginPath(); ctx.strokeStyle='#b060ff'; ctx.lineWidth=1.5;
+  prices.forEach((p,i)=>{if(i===0)ctx.moveTo(toX(i),toY(p));else ctx.lineTo(toX(i),toY(p));});
+  ctx.stroke();
+
+  // Under fill
+  ctx.beginPath();
+  prices.forEach((p,i)=>{if(i===0)ctx.moveTo(toX(i),toY(p));else ctx.lineTo(toX(i),toY(p));});
+  ctx.lineTo(toX(n-1),H);ctx.lineTo(toX(0),H);ctx.closePath();
+  ctx.fillStyle='#b060ff08';ctx.fill();
+
+  // Spikes
+  spikes.forEach((s,i)=>{if(!s)return;ctx.beginPath();ctx.arc(toX(i),toY(prices[i]),4,0,Math.PI*2);ctx.fillStyle='#ff3d6b';ctx.fill();});
+
+  // Traps (diamond shape)
+  traps.forEach((t,i)=>{
+    if(!t)return;
+    const x=toX(i),y=toY(prices[i]);
+    ctx.beginPath();
+    ctx.moveTo(x,y-8);ctx.lineTo(x+6,y);ctx.lineTo(x,y+8);ctx.lineTo(x-6,y);ctx.closePath();
+    ctx.fillStyle='#ff2d55';ctx.fill();
+  });
+
+  // Reversals (triangle)
+  reversals.forEach((r,i)=>{
+    if(!r)return;
+    const x=toX(i),y=toY(prices[i]);
+    ctx.beginPath();ctx.moveTo(x,y-7);ctx.lineTo(x+5,y+3);ctx.lineTo(x-5,y+3);ctx.closePath();
+    ctx.fillStyle='#f0a500';ctx.fill();
+  });
+
+  // Entry zone
+  const entryX=toX(n-12);
+  ctx.strokeStyle='#b060ff40';ctx.lineWidth=1;ctx.setLineDash([3,3]);
+  ctx.beginPath();ctx.moveTo(entryX,0);ctx.lineTo(entryX,H);ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='#b060ff12';ctx.fillRect(entryX,0,W-entryX,H);
+  ctx.fillStyle='#b060ff80';ctx.font='9px Share Tech Mono';ctx.fillText('ENTRY ZONE',entryX+4,12);
+
+  // Legend
+  const items=[['#ff3d6b','SPIKE'],['#ff2d55','◆TRAP'],['#f0a500','▲REV'],['#f0a500','▒CHOP']];
+  let lx=W-200;
+  items.forEach(([c,label])=>{
+    ctx.fillStyle=c;ctx.fillRect(lx,H-14,8,8);
+    ctx.fillStyle=c+'90';ctx.font='9px Share Tech Mono';ctx.fillText(label,lx+11,H-7);
+    lx+=52;
+  });
+}
+
+// ============================================================
+// DEMO
+// ============================================================
+function loadDemo() {
+  const prices = [];
+  let p = 1.08500;
+  const trend = Math.random()>0.5?1:-1;
+  for (let i=0;i<288;i++) {
+    // Weekend: more chop, inject traps
+    if (i===60) { // fake push up then reverse (trap)
+      for(let j=0;j<10;j++){p+=0.00015;prices.push(p.toFixed(5));}
+      for(let j=0;j<8;j++){p-=0.00018;prices.push(p.toFixed(5));}
+      i+=17; continue;
+    }
+    p += trend*0.000008 + (Math.random()-0.49)*0.00007;
+    if(i===150||i===220){p+=(Math.random()>0.5?1:-1)*0.00020;} // fake spikes
+    if(i===151||i===221){p-=(Math.random()>0.5?1:-1)*0.00015;}
+    prices.push(p.toFixed(5));
+  }
+  document.getElementById('raw-input').value = prices.slice(0,288).join('\n');
+}
+
+function clearAll(){
+  document.getElementById('raw-input').value='';
+  document.getElementById('breakdown-wrap').style.display='none';
+  document.getElementById('alerts-wrap').style.display='none';
+  document.getElementById('sig-word').textContent='WAITING';
+  document.getElementById('sig-word').className='signal-word';
+  document.getElementById('sig-mega').className='signal-mega';
+  document.getElementById('conf-fill').style.width='0%';
+  document.getElementById('conf-pct').textContent='0%';
+  document.getElementById('sig-sub').textContent='Select session · Paste 288 prices · Calculate';
+  document.getElementById('manip-fill').style.width='0%';
+  document.getElementById('manip-num').textContent='—';
+}
+</script>
+</body>
+</html>
