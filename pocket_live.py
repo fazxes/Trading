@@ -64,9 +64,9 @@ def setup_price_feed(page: Page):
 # ═══════════════════════════════════════════════════════════════
 # CONFIGURATION — change these as needed
 # ═══════════════════════════════════════════════════════════════
-EMAIL = "hello@no9.io"
-PASSWORD = "Faze2501-"
-DEMO_MODE = True          # True = demo, False = real account
+EMAIL = "Sanchitk1904@gmail.com"
+PASSWORD = "Sanchit_2704"
+DEMO_MODE = False         # True = demo, False = real account
 ASSET = "EUR/USD OTC"     # Change to any asset the platform supports
 TRADE_AMOUNT = 1          # Dollars per trade
 TRADE_EXPIRY = 7          # Seconds — trade expires at 0:01 remaining
